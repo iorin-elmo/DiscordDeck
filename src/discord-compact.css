@@ -1,0 +1,22 @@
+/* Only marked, detected Discord elements are hidden. Login pages are never marked. */
+html[data-discorddeck-hide-header="true"],
+html[data-discorddeck-hide-header="true"] [data-discorddeck-header-layout] {
+  --custom-app-top-bar-height: 0px !important;
+}
+html[data-discorddeck-hide-header="true"] [data-discorddeck-header] {
+  display: none !important;
+}
+html[data-discorddeck-hide-servers="true"],
+html[data-discorddeck-hide-servers="true"] [data-discorddeck-server-layout] {
+  --custom-guild-list-width: 0px !important;
+}
+html[data-discorddeck-hide-servers="true"] [data-discorddeck-servers] {
+  /* Keep a real viewport for Discord's virtualized server list while removing it from the grid. */
+  position: fixed !important;
+  left: -200px !important;
+  top: 0 !important;
+  width: 72px !important;
+  height: 100vh !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}

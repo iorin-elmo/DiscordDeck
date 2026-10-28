@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://cdn.discordapp.com https://media.discordapp.net; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>DiscordDeck</title>
+  <link rel="icon" type="image/png" href="assets/app-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+    <symbol id="i-columns" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M12 4v16"/></symbol>
+    <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1 .7-1.5 1-1.5 2.5M12 17h.01"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="m9 3-.6 2.5-2 .9-2.3-.7-2 3.5 1.8 1.8v2l-1.8 1.8 2 3.5 2.4-.7 1.9 1L9 21h6l.6-2.5 2-.9 2.3.7 2-3.5-1.8-1.8v-2l1.8-1.8-2-3.5-2.4.7-1.9-1L15 3z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-8h6v8"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 4 5 9H2v6h3l6 5zM16 8a6 6 0 0 1 0 8M19 5a10 10 0 0 1 0 14"/></symbol>
+  </defs></svg>
+  <aside class="rail" aria-label="アカウント切り替え">
+    <div class="brand-mark" title="DiscordDeck"><img src="assets/app-icon.png" alt="DiscordDeck"></div>
+    <div class="rail-divider"></div>
+    <nav id="accounts-nav" class="accounts-nav" aria-label="登録アカウント"></nav>
+    <button id="rail-add" class="rail-add icon-button" title="アカウントを追加" aria-label="アカウントを追加"><svg><use href="#i-plus"/></svg></button>
+    <div class="rail-bottom">
+      <div class="layout-picker" role="group" aria-label="レイアウト">
+        <button data-layout="columns" data-columns="2" title="2列で表示" aria-label="2列で表示">2列</button>
+        <button data-layout="columns" data-columns="3" title="3列で表示" aria-label="3列で表示">3列</button>
+        <button data-layout="grid" title="4分割で表示" aria-label="4分割で表示">4分割</button>
+      </div>
+      <div id="pager" class="pager" hidden><button id="previous-page" class="icon-button" aria-label="前のアカウントを表示"><svg><use href="#i-left"/></svg></button><button id="next-page" class="icon-button" aria-label="次のアカウントを表示"><svg><use href="#i-right"/></svg></button><span id="page-label"></span></div>
+      <button id="settings-button" class="icon-button" title="本体設定" aria-label="本体設定"><svg><use href="#i-settings"/></svg></button>
+      <button id="help-button" class="icon-button" title="使い方" aria-label="使い方"><svg><use href="#i-help"/></svg></button><span class="version" title="DiscordDeck v0.7.1・非公式アプリ">v0.7.1</span>
+    </div>
+  </aside>
+  <main class="app-main">
+    <section id="welcome" class="welcome">
+      <div class="welcome-copy"><span class="pill">A LITTLE LESS SWITCHING.</span><h2>アカウントをまたぐ。<br><span>会話は、途切れない。</span></h2><p>仕事も、友だちも、コミュニティも。<br>いつものDiscordを並べて、まとめて見渡そう。</p><button id="welcome-add" class="button primary"><svg><use href="#i-plus"/></svg>最初のアカウントを追加</button><div class="welcome-note"><svg><use href="#i-shield"/></svg>ログインはDiscord公式画面で。アカウントごとに保存。</div></div>
+      <div class="deck-illustration" aria-hidden="true"><div class="illustration-label">ONE DESK. ALL YOUR WORLDS.</div><div class="mini-decks"><div class="mini-deck"><div class="mini-head"><b>W</b><span>WORK</span><i></i></div><div class="mini-body"><div class="mini-sidebar"><i></i><i></i><i></i></div><div class="mini-lines"><em># team</em><i></i><i></i><i></i><i></i></div></div></div><div class="mini-deck"><div class="mini-head"><b>P</b><span>PERSONAL</span><i></i></div><div class="mini-body"><div class="mini-sidebar"><i></i><i></i><i></i></div><div class="mini-lines"><em># friends</em><i></i><i></i><i></i><i></i></div></div></div><div class="mini-deck"><div class="mini-head"><b>C</b><span>COMMUNITY</span><i></i></div><div class="mini-body"><div class="mini-sidebar"><i></i><i></i><i></i></div><div class="mini-lines"><em># lounge</em><i></i><i></i><i></i><i></i></div></div></div></div><div class="illustration-bottom"><span>01 — ADD</span><span>02 — SIGN IN</span><span>03 — STAY IN THE LOOP</span></div></div>
+    </section>
+    <section id="deck" class="deck" aria-label="Discordの列" hidden></section>
+  </main>
+  <div id="privacy-screen" class="privacy-screen" hidden><svg aria-hidden="true"><use href="#i-shield"/></svg><h2>内容を非表示にしています</h2><p>DiscordDeckにフォーカスを戻すと表示されます。</p></div>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <div class="dialog-header"><span class="eyebrow">DISCORDDECK</span><button type="button" class="icon-button" data-close aria-label="閉じる"><svg><use href="#i-close"/></svg></button></div>
+      <h2 id="settings-title">本体設定</h2><p class="dialog-description">すべてのアカウントに適用します。</p>
+      <label class="toggle-row"><span>フルスクリーンモード<small>タイトルバーを隠して画面いっぱいに表示します。F11でも切り替えられ、次回起動時にも引き継ぎます。</small></span><input id="settings-fullscreen" type="checkbox"></label>
+      <label class="toggle-row"><span>通知音を鳴らす<small>Discordの通知・着信・操作音。通話音声や添付メディアの再生音は残ります。</small></span><input id="settings-sound" type="checkbox"></label>
+      <label class="toggle-row"><span>フォーカスを外すと内容を隠す<small>アカウント名や会話を隠します。通話と通知音は継続し、OS通知は内容を伏せます。</small></span><input id="settings-privacy" type="checkbox"></label>
+      <div class="device-heading"><h3>通話の既定デバイス</h3><button id="refresh-devices" type="button" class="button secondary">デバイス一覧を更新</button></div>
+      <p class="field-hint">一覧の取得時だけマイクの使用許可が必要です。取得後は停止します。</p>
+      <label class="field-label" for="settings-input">マイク</label><select id="settings-input"></select>
+      <label class="field-label" for="settings-output">スピーカー</label><select id="settings-output"></select>
+      <p class="field-hint">マイクの変更は次の通話から適用します。スピーカーは許可された機器へ切り替えます。各アカウントのマイクの使用許可も必要です。</p>
+      <p id="device-status" class="field-hint" role="status"></p><p id="settings-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="button secondary" data-close>キャンセル</button><button id="save-settings" type="submit" class="button primary">設定を保存</button></div>
+    </form>
+  </dialog>
+  <dialog id="account-dialog" aria-labelledby="dialog-title">
+    <form id="account-form"><div class="dialog-header"><span class="eyebrow">YOUR ACCOUNT</span><button type="button" class="icon-button" data-close aria-label="閉じる"><svg><use href="#i-close"/></svg></button></div><h2 id="dialog-title">アカウントを追加</h2><p id="dialog-description" class="dialog-description">見分けやすい名前を付けて、Discordにログインしましょう。</p>
+      <label class="field-label" for="account-name">表示名</label><input id="account-name" name="name" placeholder="例：仕事用、プライベート" maxlength="32" required autocomplete="off"><span class="field-hint">このアプリ内だけで使う名前です。</span>
+      <div id="edit-options" hidden>
+        <div class="settings-zoom-row"><span>表示倍率</span><div class="settings-zoom-controls"><button id="zoom-out" type="button" class="button secondary" aria-label="この列を縮小">−</button><output id="settings-zoom">80%</output><button id="zoom-in" type="button" class="button secondary" aria-label="この列を拡大">+</button><button id="zoom-reset" type="button" class="button secondary">80%に戻す</button></div></div>
+        <span class="field-hint">倍率の変更はすぐに反映されます。</span>
+        <label class="toggle-row"><span>Discordの上部バーをまとめる<small>タイトルをカラム中央に表示します。検出できない場合は元のバーを残します。</small></span><input id="account-compact-header" type="checkbox"></label>
+        <label class="toggle-row"><span>サーバー一覧をメニューにまとめる<small>カラム左上のメニューから移動できます。元の表示にも戻せます。</small></span><input id="account-compact-servers" type="checkbox"></label>
+        <div class="avatar-setting"><span id="avatar-preview" class="avatar-preview"></span><div><div class="avatar-actions"><button id="choose-avatar" type="button" class="button secondary">画像を選ぶ</button><button id="reset-avatar" type="button" class="button secondary">Discordのアイコンに戻す</button></div><span class="field-hint">未設定時はDiscordのユーザー欄から自動取得します。</span></div></div>
+        <div class="order-setting"><span>表示順</span><button id="move-up" type="button" class="button secondary">上に移動</button><button id="move-down" type="button" class="button secondary">下に移動</button></div>
+        <fieldset><legend>アクセントカラー</legend><div id="color-picker" class="color-picker"></div><div class="custom-color-row"><input id="account-color" type="color" aria-label="色を選択"><label for="account-color-code">カラーコード</label><input id="account-color-code" type="text" maxlength="7" placeholder="#8b91ff" autocomplete="off" spellcheck="false"></div><div id="color-preview" class="color-preview">ヘッダーと選択枠のプレビュー</div></fieldset>
+        <label class="toggle-row"><span>この列の音をミュート<small>通話相手の声・通知音を含む、ページ内の音を消します。</small></span><input id="account-muted" type="checkbox"></label>
+        <label class="toggle-row"><span>デスクトップ通知を許可<small>左バーの未読マークは、この設定に関係なく表示します。</small></span><input id="account-notifications" type="checkbox"></label>
+        <label class="toggle-row"><span>通話用マイクを許可<small>初回の使用時に確認します。Windows側の許可も必要です。</small></span><input id="account-microphone" type="checkbox"></label>
+        <label class="toggle-row"><span>ビデオ通話用カメラを許可<small>初回の使用時に確認します。</small></span><input id="account-camera" type="checkbox"></label>
+      </div>
+      <div id="add-note" class="info-box"><svg><use href="#i-shield"/></svg><p>追加するとDiscord公式のログイン画面が開きます。別のアカウントのログイン状態には影響しません。</p></div>
+      <p id="form-error" class="form-error" role="alert"></p><div class="dialog-actions"><button id="remove-account" type="button" class="text-danger" hidden>この列を削除</button><span class="spacer"></span><button type="button" class="button secondary" data-close>キャンセル</button><button id="save-account" type="submit" class="button primary">追加してログイン</button></div>
+    </form>
+    <div id="remove-confirmation" hidden><span class="eyebrow">REMOVE COLUMN</span><h2>この列を削除しますか？</h2><p class="dialog-description">このアプリに保存された、この列のログイン情報・キャッシュも削除します。Discordのアカウント自体は削除されません。</p><p id="remove-error" class="form-error" role="alert"></p><div class="dialog-actions"><button id="cancel-remove" class="button secondary">戻る</button><button id="confirm-remove" class="button danger">列とログイン情報を削除</button></div></div>
+  </dialog>
+  <dialog id="navigation-dialog" aria-labelledby="navigation-title"><div class="dialog-header"><span class="eyebrow">NAVIGATION</span><button class="icon-button" data-close aria-label="閉じる"><svg><use href="#i-close"/></svg></button></div><h2 id="navigation-title">サーバー / DM</h2><input id="navigation-search" type="search" aria-label="移動先を検索" placeholder="サーバーやDMを検索" autocomplete="off"><div id="navigation-list" class="navigation-list"></div><div class="navigation-restore"><p class="field-hint">移動先が見つからない場合は、元の一覧を表示してください。</p><button id="restore-discord-ui" class="button secondary">Discordの元の一覧・上部バーを表示</button></div></dialog>
+  <dialog id="help-dialog" aria-labelledby="help-title">
+    <div class="dialog-header"><span class="eyebrow">GETTING STARTED</span><button class="icon-button" data-close aria-label="閉じる"><svg><use href="#i-close"/></svg></button></div>
+    <h2 id="help-title">DiscordDeckの使い方</h2>
+    <ol class="help-steps">
+      <li><b>アカウントを追加</b><p>表示名を決め、列内のDiscord公式画面でログインします。</p></li>
+      <li><b>自分の見やすい並びに</b><p>2列・3列・4分割・単独表示を切り替えられます。左バーをドラッグすると並び順を変更できます。</p></li>
+      <li><b>倍率・色・アイコンを調整</b><p>列の「…」で表示倍率、カラーコード、アイコン、通知や通話の許可を変更できます。</p></li>
+      <li><b>サーバー・DMに移動</b><p>列の左上のメニューから移動します。一覧にない移動先は「Discordの元の一覧・上部バーを表示」から開けます。統合表示は「…」で切り替えられます。</p></li>
+    </ol>
+    <div class="help-details"><p>最大8アカウント。未読マークはDiscordの未読表示に連動します。自動アイコンや統合表示はDiscordの画面変更により取得できない場合があります。</p><p>通話はDiscord内の通話ボタンから開始し、マイクの確認で許可してください。カメラは「…」で有効にします。画面共有は未対応です。</p><p>Discordとは関係のない非公式アプリです。</p><p>保存先：%APPDATA%\DiscordDeck<br>ログイン情報を含むため、保存フォルダを他人と共有しないでください。</p></div>
+    <div class="dialog-actions"><button id="reset-external-permissions" class="button secondary">外部アプリの許可をリセット</button><button id="open-data-folder" class="button secondary">保存フォルダを開く</button><button class="button primary" data-close>はじめる</button></div>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="renderer.js"></script>
+</body>
+</html>
