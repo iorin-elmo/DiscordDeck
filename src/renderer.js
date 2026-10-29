@@ -18,6 +18,10 @@ const accountDialog = $('#account-dialog');
 const helpDialog = $('#help-dialog');
 const navigationDialog = $('#navigation-dialog');
 const settingsDialog = $('#settings-dialog');
+const credentialsDialog = $('#credentials-dialog');
+let credentialsId = null;
+let credentialsBusy = false;
+let credentialsEditing = false;
 let settingsBusy = false;
 let displayedFullscreen;
 let scanGeneration = 0;
@@ -152,6 +156,7 @@ function render(next) {
   if (settingsDialog.open && displayedFullscreen !== next.settings.fullscreen) $('#settings-fullscreen').checked = next.settings.fullscreen;
   displayedFullscreen = next.settings.fullscreen;
   state = next;
+  if (accountDialog.open) updateCredentialStatus();
   document.body.classList.toggle('privacy-hidden', state.privacyHidden === true);
   $('#privacy-screen').hidden = state.privacyHidden !== true;
   const accounts = state.accounts;
@@ -289,12 +294,12 @@ function openDialog(dialog) {
   window.deck.setModal(true); window.deck.setBounds([]); dialog.showModal();
 }
 function closeDialog(dialog) {
-  if (submitting || settingsBusy) return;
+  if (submitting || settingsBusy || credentialsBusy) return;
   dialog.close();
 }
 for (const dialog of $$('dialog')) {
-  dialog.addEventListener('close', () => { window.deck.setModal(false); reportBounds(); });
-  dialog.addEventListener('cancel', (event) => { if (submitting || settingsBusy) event.preventDefault(); });
+  dialog.addEventListener('close', () => { window.deck.setModal(Boolean($('dialog[open]'))); reportBounds(); });
+  dialog.addEventListener('cancel', (event) => { if (submitting || settingsBusy || credentialsBusy) event.preventDefault(); });
   for (const button of $$('[data-close]', dialog)) button.addEventListener('click', () => closeDialog(dialog));
 }
 
@@ -312,6 +317,7 @@ function openAccount(id = null) {
   $('#account-camera').checked = entry?.camera === true;
   $('#account-compact-header').checked = entry?.compactHeader !== false;
   $('#account-compact-servers').checked = entry?.compactServers !== false;
+  updateCredentialStatus();
   if (entry) updateZoom(entry);
   selectedAvatar = entry?.avatar ?? null;
   if (entry) renderAvatar($('#avatar-preview'), entry, selectedAvatar);
@@ -356,6 +362,60 @@ $('#account-form').addEventListener('submit', async (event) => {
   setSubmitting(false);
   if (result.ok) { closeDialog(accountDialog); notice(editId ? '設定を保存しました。' : '列を追加しました。Discordの画面でログインしてください。'); }
   else $('#form-error').textContent = result.error;
+});
+function credentialStatus(entry) {
+  if (entry?.credentialsError) return '保存情報を読み込めません。';
+  if (!entry?.credentialsSaved) return '未保存';
+  return entry.autofillEnabled ? '保存済み・自動入力ON' : '保存済み・自動入力OFF';
+}
+function updateCredentialStatus() { $('#account-credentials-status').textContent = credentialStatus(state.accounts.find((a) => a.id === editId)); }
+function clearCredentialInputs() { $('#login-email').value = ''; $('#login-password').value = ''; }
+function showCredentialForm() {
+  const entry = state.accounts.find((a) => a.id === credentialsId);
+  $('#credentials-title').textContent = `${entry?.name || ''}のログイン情報`;
+  $('#credentials-status').textContent = credentialStatus(entry);
+  $('#credentials-fields').hidden = !credentialsEditing;
+  for (const input of $$('#credentials-fields input')) { input.disabled = !credentialsEditing; input.required = credentialsEditing; }
+  $('#change-credentials').hidden = !entry?.credentialsSaved || credentialsEditing;
+  $('#delete-credentials').hidden = !entry?.credentialsSaved;
+  $('#save-credentials').textContent = credentialsEditing ? (entry?.credentialsSaved ? '変更を保存' : '保存') : '設定を保存';
+}
+function setCredentialBusy(value) {
+  credentialsBusy = value;
+  for (const control of $$('button,input', credentialsDialog)) control.disabled = value;
+  if (!value) showCredentialForm();
+}
+$('#manage-credentials').addEventListener('click', () => {
+  credentialsId = editId;
+  const entry = state.accounts.find((a) => a.id === credentialsId);
+  clearCredentialInputs(); credentialsEditing = !entry?.credentialsSaved;
+  $('#credentials-enabled').checked = entry?.credentialsSaved ? entry.autofillEnabled : true;
+  $('#credentials-error').textContent = '';
+  showCredentialForm(); openDialog(credentialsDialog);
+});
+$('#change-credentials').addEventListener('click', () => {
+  credentialsEditing = true; clearCredentialInputs(); showCredentialForm(); $('#login-email').focus();
+});
+credentialsDialog.addEventListener('close', () => { clearCredentialInputs(); credentialsId = null; });
+$('#credentials-form').addEventListener('submit', async (event) => {
+  event.preventDefault(); if (credentialsBusy) return;
+  const payload = { type: 'credentials-save', id: credentialsId, enabled: $('#credentials-enabled').checked, email: credentialsEditing ? $('#login-email').value : '', password: credentialsEditing ? $('#login-password').value : '' };
+  clearCredentialInputs(); setCredentialBusy(true);
+  const result = await command(payload, false);
+  payload.email = ''; payload.password = '';
+  if (result.ok) credentialsEditing = false;
+  setCredentialBusy(false);
+  $('#credentials-error').textContent = result.ok ? '' : result.error;
+  if (result.ok) $('#credentials-status').textContent = '保存しました。' + credentialStatus(state.accounts.find((a) => a.id === credentialsId));
+});
+$('#delete-credentials').addEventListener('click', async () => {
+  if (credentialsBusy) return;
+  clearCredentialInputs(); setCredentialBusy(true);
+  const result = await command({ type: 'credentials-delete', id: credentialsId }, false);
+  if (result.ok) credentialsEditing = true;
+  setCredentialBusy(false);
+  $('#credentials-error').textContent = result.ok ? '' : result.error;
+  if (result.ok) $('#credentials-status').textContent = '保存したログイン情報を削除しました。';
 });
 $('#remove-account').addEventListener('click', () => { $('#account-form').hidden = true; $('#remove-confirmation').hidden = false; $('#cancel-remove').focus(); });
 $('#cancel-remove').addEventListener('click', () => { $('#account-form').hidden = false; $('#remove-confirmation').hidden = true; });

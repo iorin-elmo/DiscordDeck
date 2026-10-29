@@ -21,7 +21,9 @@ async function setup(page, accounts = []) {
     Object.defineProperty(window, 'deck', { configurable: false, writable: false, value: {
       getState: async () => state,
       command: async (value) => {
-        calls.push(value);
+        calls.push(structuredClone(value));
+        if (value.type === 'credentials-save') Object.assign(state.accounts.find((a) => a.id === value.id), { credentialsSaved: true, autofillEnabled: value.enabled });
+        if (value.type === 'credentials-delete') Object.assign(state.accounts.find((a) => a.id === value.id), { credentialsSaved: false, autofillEnabled: false });
         if (value.type === 'settings') state.settings = value.settings;
         if (value.type === 'layout') { state.mode = value.mode; if (value.columnCount) state.columnCount = value.columnCount; }
         if (value.type === 'focus') { state.activeId = value.id; state.mode = state.mode === 'focus' ? 'columns' : 'focus'; }
@@ -50,6 +52,38 @@ async function setup(page, accounts = []) {
   await expect(page.locator('[data-layout][aria-pressed]').first()).toBeVisible();
   expect(pageErrors).toEqual([]);
 }
+
+test('ログイン情報の保存・変更・削除と、閉じた際の消去、重ねた設定ダイアログを扱う', async ({ page }) => {
+  await setup(page, [createAccount('A')]);
+  await page.getByRole('button', { name: 'Aの設定', exact: true }).click();
+  await page.getByRole('button', { name: '保存・変更・削除', exact: true }).click();
+  await page.getByLabel('メールアドレス', { exact: true }).fill('fixture@example.invalid');
+  await page.getByLabel('パスワード', { exact: true }).fill('fixture-password');
+  await page.locator('#save-credentials').click();
+  await expect(page.locator('#credentials-status')).toContainText('保存しました');
+  await expect(page.locator('#login-password')).toHaveValue('');
+  await expect(page.locator('#credentials-fields')).toBeHidden();
+  expect(await page.evaluate(() => window.__calls.find((v) => v.type === 'credentials-save'))).toMatchObject({ email: 'fixture@example.invalid', password: 'fixture-password', enabled: true });
+  await page.getByRole('button', { name: 'ログイン情報を変更', exact: true }).click();
+  await page.getByLabel('メールアドレス', { exact: true }).fill('changed@example.invalid');
+  await page.getByLabel('パスワード', { exact: true }).fill('changed-password');
+  await page.locator('#save-credentials').click();
+  await page.locator('#credentials-enabled').uncheck(); await page.locator('#save-credentials').click();
+  await expect(page.locator('#credentials-status')).toContainText('自動入力OFF');
+  await page.locator('#delete-credentials').click();
+  await expect(page.locator('#credentials-status')).toContainText('削除しました');
+  await expect(page.locator('#delete-credentials')).toBeHidden();
+  await page.getByLabel('パスワード', { exact: true }).fill('unsaved-password');
+  await page.screenshot({ path: 'artifacts/login-credentials-settings.png' });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#credentials-dialog')).toBeHidden();
+  await expect(page.locator('#login-password')).toHaveValue('');
+  await expect(page.locator('#account-dialog')).toBeVisible();
+  expect(await page.evaluate(() => window.__modal)).toBe(true);
+  expect(await page.evaluate(() => window.__bounds.length)).toBe(0);
+  await page.getByRole('button', { name: '保存・変更・削除', exact: true }).click();
+  await expect(page.locator('#login-email')).toHaveValue(''); await expect(page.locator('#login-password')).toHaveValue('');
+});
 
 test('フルスクリーンを設定から保存・解除でき、受信更新で編集が消えず、F11相当の状態変更にも同期する', async ({ page }) => {
   const account = createAccount('A'); await setup(page, [account]);

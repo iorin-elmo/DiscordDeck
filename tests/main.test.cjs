@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
+const { randomBytes, createCipheriv, createDecipheriv } = require('node:crypto');
 
 // Exercise the actual main-process command and security logic with an Electron API double.
 // Native Chromium, cookie persistence and view rendering require tests/app.spec.cjs on an OS that allows Electron.
@@ -67,6 +68,11 @@ async function boot(options = {}) {
     ipcMain: { handle: (key, fn) => handlers.set(key, fn), on: (key, fn) => listeners.set(key, fn) },
     dialog: { async showMessageBox() { return { response: 1 }; }, showErrorBox(_title, message) { throw new Error(message); } },
     shell: { async openExternal(url) { links.push(url); }, async openPath() {} },
+    safeStorage: {
+      async isAsyncEncryptionAvailable() { return true; },
+      async encryptStringAsync(value) { const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', Buffer.alloc(32, 7), iv); const bytes = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]); return Buffer.concat([iv, cipher.getAuthTag(), bytes]); },
+      async decryptStringAsync(bytes) { const cipher = createDecipheriv('aes-256-gcm', Buffer.alloc(32, 7), bytes.subarray(0, 12)); cipher.setAuthTag(bytes.subarray(12, 28)); return { result: Buffer.concat([cipher.update(bytes.subarray(28)), cipher.final()]).toString('utf8'), shouldReEncrypt: false }; },
+    },
   };
   const mainPath = path.join(__dirname, '../src/main.cjs'); const realRequire = createRequire(mainPath);
   vm.runInNewContext(fs.readFileSync(mainPath, 'utf8'), {
@@ -84,6 +90,77 @@ async function boot(options = {}) {
     cleanup: () => { app.emit('before-quit', { preventDefault() {} }); win.emit('closed'); },
   };
 }
+
+test('ログイン情報を保存・変更・削除し、対応する公式ログイン画面にだけ返す', async () => {
+  const ctx = await boot();
+  try {
+    await ctx.command({ type: 'add', name: 'A' }); await ctx.command({ type: 'add', name: 'B' });
+    const [a, b] = ctx.get().accounts;
+    const wc = ctx.win.contentView.children[0].webContents, other = ctx.win.contentView.children[1].webContents;
+    const request = () => ctx.handlers.get('discord:credentials')({ sender: wc, senderFrame: wc.mainFrame });
+    assert.equal((await ctx.command({ type: 'credentials-save', id: a.id, email: 'first@example.invalid', password: 'fixture-password-A', enabled: true })).ok, true);
+    assert.equal(ctx.get().accounts[0].credentialsSaved, true);
+    assert.equal(JSON.stringify(ctx.get()).includes('fixture-password'), false);
+    assert.equal(JSON.stringify(ctx.get()).includes('first@example.invalid'), false);
+    assert.equal(fs.readFileSync(path.join(ctx.data, 'deck.json'), 'utf8').includes('fixture-password'), false);
+    assert.equal(fs.readFileSync(path.join(ctx.data, 'login-credentials.json'), 'utf8').includes('fixture-password'), false);
+    wc.mainFrame.url = 'https://discord.com/login?redirect_to=%2Fchannels%2F%40me';
+    assert.equal((await request()).email, 'first@example.invalid');
+    const subframe = { sender: wc, senderFrame: { url: wc.mainFrame.url } };
+    assert.equal(await ctx.handlers.get('discord:credentials')(subframe), null);
+    assert.equal(await ctx.handlers.get('discord:credentials')(ctx.event), null);
+    other.mainFrame.url = 'https://discord.com/login';
+    assert.equal(await ctx.handlers.get('discord:credentials')({ sender: other, senderFrame: other.mainFrame }), null);
+    for (const url of ['https://evil.test/login', 'https://discord.com/register', 'https://discord.com/channels/@me']) { wc.mainFrame.url = url; assert.equal(await request(), null); }
+    wc.mainFrame.url = 'https://discord.com/login';
+    await ctx.command({ type: 'credentials-save', id: a.id, email: 'changed@example.invalid', password: 'fixture-password-B', enabled: true });
+    assert.equal((await request()).password, 'fixture-password-B');
+    await ctx.command({ type: 'credentials-save', id: a.id, email: '', password: '', enabled: false });
+    assert.equal(await request(), null); assert.equal(ctx.get().accounts[0].credentialsSaved, true);
+    await ctx.command({ type: 'credentials-delete', id: a.id });
+    assert.equal(await request(), null); assert.equal(ctx.get().accounts[0].credentialsSaved, false);
+    assert.equal(ctx.get().accounts[1].id, b.id);
+  } finally { ctx.cleanup(); }
+});
+
+test('復号中の画面移動・削除で認証情報を返さず、暗号化不可時は平文保存しない', async () => {
+  const ctx = await boot();
+  try {
+    await ctx.command({ type: 'add', name: 'A' });
+    const id = ctx.get().accounts[0].id, wc = ctx.win.contentView.children[0].webContents;
+    await ctx.command({ type: 'credentials-save', id, email: 'first@example.invalid', password: 'fixture-password-A', enabled: true });
+    wc.mainFrame.url = 'https://discord.com/login';
+    let finish;
+    ctx.electron.safeStorage.decryptStringAsync = () => new Promise((resolve) => { finish = resolve; });
+    const pending = ctx.handlers.get('discord:credentials')({ sender: wc, senderFrame: wc.mainFrame });
+    await new Promise(setImmediate);
+    wc.mainFrame.url = 'https://discord.com/channels/@me';
+    finish({ result: JSON.stringify({ id, email: 'first@example.invalid', password: 'fixture-password-A' }) });
+    assert.equal(await pending, null);
+    wc.mainFrame.url = 'https://discord.com/login';
+    const removed = ctx.handlers.get('discord:credentials')({ sender: wc, senderFrame: wc.mainFrame });
+    await new Promise(setImmediate);
+    await ctx.command({ type: 'credentials-delete', id });
+    finish({ result: JSON.stringify({ id, email: 'first@example.invalid', password: 'fixture-password-A' }) });
+    assert.equal(await removed, null);
+    ctx.electron.safeStorage.isAsyncEncryptionAvailable = async () => false;
+    const result = await ctx.command({ type: 'credentials-save', id, email: 'first@example.invalid', password: 'fixture-password-A', enabled: true });
+    assert.equal(result.ok, false); assert.equal(ctx.get().accounts[0].credentialsSaved, false);
+    assert.equal(fs.readFileSync(path.join(ctx.data, 'login-credentials.json'), 'utf8').includes('fixture-password'), false);
+  } finally { ctx.cleanup(); }
+});
+
+test('列の削除時は、その列の保存ログイン情報も削除する', async () => {
+  const ctx = await boot();
+  try {
+    for (const name of ['A', 'B']) await ctx.command({ type: 'add', name });
+    const [a, b] = ctx.get().accounts;
+    for (const entry of [a, b]) await ctx.command({ type: 'credentials-save', id: entry.id, email: `${entry.name}@example.invalid`, password: 'fixture-password', enabled: true });
+    assert.equal((await ctx.command({ type: 'remove', id: a.id })).ok, true);
+    const raw = JSON.parse(fs.readFileSync(path.join(ctx.data, 'login-credentials.json'), 'utf8'));
+    assert.equal(raw.entries[a.id], undefined); assert.ok(raw.entries[b.id]);
+  } finally { ctx.cleanup(); }
+});
 
 test('アプリ更新で保存先・列のセッション識別子・ブラウザ識別文字列を変えない', async () => {
   const first = await boot({ version: '0.6.1' });

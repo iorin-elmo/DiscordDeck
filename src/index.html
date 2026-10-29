@@ -40,7 +40,7 @@
       </div>
       <div id="pager" class="pager" hidden><button id="previous-page" class="icon-button" aria-label="前のアカウントを表示"><svg><use href="#i-left"/></svg></button><button id="next-page" class="icon-button" aria-label="次のアカウントを表示"><svg><use href="#i-right"/></svg></button><span id="page-label"></span></div>
       <button id="settings-button" class="icon-button" title="本体設定" aria-label="本体設定"><svg><use href="#i-settings"/></svg></button>
-      <button id="help-button" class="icon-button" title="使い方" aria-label="使い方"><svg><use href="#i-help"/></svg></button><span class="version" title="DiscordDeck v0.7.1・非公式アプリ">v0.7.1</span>
+      <button id="help-button" class="icon-button" title="使い方" aria-label="使い方"><svg><use href="#i-help"/></svg></button><span class="version" title="DiscordDeck v0.8.0・非公式アプリ">v0.8.0</span>
     </div>
   </aside>
   <main class="app-main">
@@ -71,6 +71,7 @@
     <form id="account-form"><div class="dialog-header"><span class="eyebrow">YOUR ACCOUNT</span><button type="button" class="icon-button" data-close aria-label="閉じる"><svg><use href="#i-close"/></svg></button></div><h2 id="dialog-title">アカウントを追加</h2><p id="dialog-description" class="dialog-description">見分けやすい名前を付けて、Discordにログインしましょう。</p>
       <label class="field-label" for="account-name">表示名</label><input id="account-name" name="name" placeholder="例：仕事用、プライベート" maxlength="32" required autocomplete="off"><span class="field-hint">このアプリ内だけで使う名前です。</span>
       <div id="edit-options" hidden>
+        <div class="login-setting"><span><b>ログイン情報</b><small id="account-credentials-status" class="field-hint">未保存</small></span><button id="manage-credentials" type="button" class="button secondary">保存・変更・削除</button></div>
         <div class="settings-zoom-row"><span>表示倍率</span><div class="settings-zoom-controls"><button id="zoom-out" type="button" class="button secondary" aria-label="この列を縮小">−</button><output id="settings-zoom">80%</output><button id="zoom-in" type="button" class="button secondary" aria-label="この列を拡大">+</button><button id="zoom-reset" type="button" class="button secondary">80%に戻す</button></div></div>
         <span class="field-hint">倍率の変更はすぐに反映されます。</span>
         <label class="toggle-row"><span>Discordの上部バーをまとめる<small>タイトルをカラム中央に表示します。検出できない場合は元のバーを残します。</small></span><input id="account-compact-header" type="checkbox"></label>
@@ -88,6 +89,17 @@
     </form>
     <div id="remove-confirmation" hidden><span class="eyebrow">REMOVE COLUMN</span><h2>この列を削除しますか？</h2><p class="dialog-description">このアプリに保存された、この列のログイン情報・キャッシュも削除します。Discordのアカウント自体は削除されません。</p><p id="remove-error" class="form-error" role="alert"></p><div class="dialog-actions"><button id="cancel-remove" class="button secondary">戻る</button><button id="confirm-remove" class="button danger">列とログイン情報を削除</button></div></div>
   </dialog>
+  <dialog id="credentials-dialog" aria-labelledby="credentials-title"><form id="credentials-form" autocomplete="off">
+    <div class="dialog-header"><span class="eyebrow">LOGIN</span><button type="button" class="icon-button" data-close aria-label="閉じる"><svg><use href="#i-close"/></svg></button></div>
+    <h2 id="credentials-title">ログイン情報</h2><p class="dialog-description">このPCで暗号化して保存します。公式ログイン画面への自動入力まで行い、ログインボタンと追加認証は自分で操作します。</p>
+    <p id="credentials-status" class="field-hint" role="status"></p>
+    <div id="credentials-fields"><label class="field-label" for="login-email">メールアドレス</label><input id="login-email" type="email" autocomplete="off" maxlength="320" spellcheck="false"><label class="field-label" for="login-password">パスワード</label><input id="login-password" type="password" autocomplete="new-password" maxlength="4096"><span class="field-hint">保存済みの値は再表示しません。変更時は両方を入力してください。</span></div>
+    <label class="toggle-row"><span>ログイン画面に自動入力<small>入力済みの欄は上書きしません。</small></span><input id="credentials-enabled" type="checkbox"></label>
+    <button id="change-credentials" type="button" class="button secondary">ログイン情報を変更</button>
+    <p id="credentials-error" class="form-error" role="alert"></p>
+    <div class="dialog-actions"><button id="delete-credentials" type="button" class="text-danger">保存済みの情報を削除</button><span class="spacer"></span><button type="button" class="button secondary" data-close>閉じる</button><button id="save-credentials" type="submit" class="button primary">保存</button></div>
+    <p class="field-hint">削除してもDiscordからはログアウトしません。</p>
+  </form></dialog>
   <dialog id="navigation-dialog" aria-labelledby="navigation-title"><div class="dialog-header"><span class="eyebrow">NAVIGATION</span><button class="icon-button" data-close aria-label="閉じる"><svg><use href="#i-close"/></svg></button></div><h2 id="navigation-title">サーバー / DM</h2><input id="navigation-search" type="search" aria-label="移動先を検索" placeholder="サーバーやDMを検索" autocomplete="off"><div id="navigation-list" class="navigation-list"></div><div class="navigation-restore"><p class="field-hint">移動先が見つからない場合は、元の一覧を表示してください。</p><button id="restore-discord-ui" class="button secondary">Discordの元の一覧・上部バーを表示</button></div></dialog>
   <dialog id="help-dialog" aria-labelledby="help-title">
     <div class="dialog-header"><span class="eyebrow">GETTING STARTED</span><button class="icon-button" data-close aria-label="閉じる"><svg><use href="#i-close"/></svg></button></div>

@@ -1,6 +1,6 @@
 {
   "name": "discorddeck",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "private": true,
   "description": "複数のDiscordアカウントを並べて使うデスクトップアプリ",
   "main": "src/main.cjs",
@@ -8,8 +8,8 @@
   "license": "UNLICENSED",
   "scripts": {
     "start": "node scripts/start.cjs",
-    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/discord-preload.cjs && node --check src/renderer.js && node --check src/model.cjs && node --check src/external-app.cjs",
-    "test": "node --test tests/model.test.cjs tests/main.test.cjs tests/external-app.test.cjs",
+    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/discord-preload.cjs && node --check src/renderer.js && node --check src/model.cjs && node --check src/external-app.cjs && node --check src/credentials.cjs",
+    "test": "node --test tests/model.test.cjs tests/main.test.cjs tests/external-app.test.cjs tests/credentials.test.cjs",
     "test:e2e": "playwright test",
     "test:ui": "playwright test --config playwright.ui.config.cjs",
     "test:live": "node scripts/smoke-live.cjs",

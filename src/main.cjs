@@ -1,8 +1,9 @@
-const { app, BrowserWindow, WebContentsView, session, ipcMain, dialog, shell, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, WebContentsView, session, ipcMain, dialog, shell, Menu, nativeImage, safeStorage } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { resolveExternalApp } = require('./external-app.cjs');
+const { CredentialStore } = require('./credentials.cjs');
 const { HOME, COLORS, MODES, MAX_ACCOUNTS, isDiscordURL, channelURL, externalURL, label, createAccount, normalizeState, partitionFor, clampBounds, discordAvatarURL, customAvatar, unreadFromTitle, reorderAccounts, requestedMedia, mediaEnabled, displayText, normalizeNavigation, normalizeColor, appSettings, audioDevice, stableUserAgent } = require('./model.cjs');
 
 app.setName('DiscordDeck');
@@ -13,6 +14,7 @@ app.setPath('userData', dataDirectory);
 app.setPath('sessionData', dataDirectory);
 app.userAgentFallback = stableUserAgent(app.userAgentFallback);
 const configPath = path.join(app.getPath('userData'), 'deck.json');
+const credentials = new CredentialStore(path.join(dataDirectory, 'login-credentials.json'), safeStorage);
 const shellPath = path.join(__dirname, 'index.html');
 const shellURL = pathToFileURL(shellPath).href;
 const discordCompactCSS = fs.readFileSync(path.join(__dirname, 'discord-compact.css'), 'utf8');
@@ -74,7 +76,7 @@ function scheduleSave() {
 function privacyHidden() { return Boolean(state.settings.hideOnBlur && win && !win.isFocused()); }
 function mediaOptions() { return { ...state.settings, privacyHidden: privacyHidden() }; }
 function snapshot() {
-  return { ...state, privacyHidden: privacyHidden(), accounts: state.accounts.map((a) => ({ ...a, ...metadata.get(a.id), status: statuses.get(a.id) ?? 'loading' })), maxAccounts: MAX_ACCOUNTS, colors: COLORS };
+  return { ...state, privacyHidden: privacyHidden(), accounts: state.accounts.map((a) => ({ ...a, ...metadata.get(a.id), ...credentials.status(a.id), status: statuses.get(a.id) ?? 'loading' })), maxAccounts: MAX_ACCOUNTS, colors: COLORS };
 }
 function emit() { if (win && !win.isDestroyed()) win.webContents.send('deck:state', snapshot()); }
 function notify(message) { if (win && !win.isDestroyed()) win.webContents.send('deck:notice', message); }
@@ -99,7 +101,7 @@ function remoteEntry(event) {
 
 function sendAppearance(entry) {
   const contents = views.get(entry.id)?.webContents;
-  if (contents && !contents.isDestroyed()) contents.send('discord:options', { compactHeader: entry.compactHeader, compactServers: entry.compactServers, media: mediaOptions() });
+  if (contents && !contents.isDestroyed()) contents.send('discord:options', { compactHeader: entry.compactHeader, compactServers: entry.compactServers, autofill: credentials.options(entry.id), media: mediaOptions() });
 }
 
 function updatePrivacy() {
@@ -295,6 +297,20 @@ function shutdown() {
 }
 
 function registerIPC() {
+  ipcMain.handle('discord:credentials', async (event) => {
+    const entry = remoteEntry(event);
+    const url = event.senderFrame?.url;
+    const allowed = () => !shuttingDown && entry && !event.sender.isDestroyed() && remoteEntry(event) === entry && event.senderFrame.url === url && event.sender.getURL() === url && /^\/login\/?$/.test(new URL(url).pathname);
+    if (!entry || !allowed()) return null;
+    try {
+      const login = await credentials.readForFill(entry.id);
+      const current = credentials.options(entry.id);
+      return allowed() && current.enabled && current.revision === login?.revision ? login : null;
+    } catch {
+      notify('ログイン情報を自動入力できませんでした。列の「…」から保存済みの情報を確認してください。');
+      return null;
+    }
+  });
   // One synchronous, in-memory read before Discord's scripts run; never exposed to the page.
   ipcMain.on('discord:media-options', (event) => { event.returnValue = remoteEntry(event) ? mediaOptions() : null; });
   ipcMain.on('discord:media-notice', (event, code) => {
@@ -354,6 +370,18 @@ function registerIPC() {
     try {
       if (!command || typeof command !== 'object') throw new Error('無効な操作です。');
       switch (command.type) {
+        case 'credentials-save': {
+          const entry = account(command.id);
+          await credentials.save(entry.id, command);
+          sendAppearance(entry);
+          break;
+        }
+        case 'credentials-delete': {
+          const entry = account(command.id);
+          credentials.remove(entry.id);
+          sendAppearance(entry);
+          break;
+        }
         case 'settings': {
           const value = command.settings;
           if (!value || ('fullscreen' in value && typeof value.fullscreen !== 'boolean') || typeof value.notificationSound !== 'boolean' || typeof value.hideOnBlur !== 'boolean' || !['inputDevice', 'outputDevice'].every((key) => value[key] === null || audioDevice(value[key]))) throw new Error('本体設定の値が無効です。');
@@ -435,6 +463,7 @@ function registerIPC() {
           break;
         case 'remove': {
           const entry = account(command.id);
+          credentials.remove(entry.id);
           const view = views.get(entry.id);
           view.setVisible(false);
           const ses = view.webContents.session;

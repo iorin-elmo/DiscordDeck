@@ -1,5 +1,5 @@
 // IPC stays in the isolated sandbox. The page-world hook below only controls browser media APIs.
-// Never reads messages or credentials.
+// Never reads messages. Login credentials are used only for the opted-in login form autofill below.
 const { ipcRenderer, contextBridge } = require('electron');
 
 // Self-contained because contextBridge serializes this function into the page world.
@@ -194,6 +194,65 @@ if (window.top === window && location.origin === 'https://discord.com') {
   let previous = '';
   let timer;
   let options = { compactHeader: false, compactServers: false };
+  let autofill = { enabled: false, revision: '' };
+  let fillGeneration = 0;
+  let fillPending = false;
+  let attemptedForms = new WeakMap();
+  let ownedFields = [];
+  let settingLoginValues = false;
+  const visibleInput = (node) => node && !node.disabled && !node.readOnly && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
+  function loginForm() {
+    if (!/^\/login\/?$/.test(location.pathname)) return null;
+    const password = [...document.querySelectorAll('input[type="password"]')].find(visibleInput);
+    const form = password?.closest('form');
+    const email = form && [...form.querySelectorAll('input[name="email"], input[type="email"], input[autocomplete="username"]')].find(visibleInput);
+    if (!email || !password || email.value || password.value) return null;
+    if ([...form.querySelectorAll('input[autocomplete="one-time-code"], input[name="code"], input[name="mfaCode"]')].some(visibleInput)) return null;
+    try { if (form.getAttribute('action') && new URL(form.getAttribute('action'), location.href).origin !== 'https://discord.com') return null; }
+    catch { return null; }
+    return { form, email, password };
+  }
+  function setLoginValue(node, value) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(node, value);
+    node.dispatchEvent(new Event('input', { bubbles: true }));
+    node.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  function clearOwnedFields() {
+    settingLoginValues = true;
+    try { for (const field of ownedFields) if (field.node.isConnected && field.node.value === field.value) setLoginValue(field.node, ''); }
+    finally { ownedFields = []; settingLoginValues = false; }
+  }
+  document.addEventListener('input', (event) => {
+    if (!settingLoginValues) ownedFields = ownedFields.filter((field) => field.node !== event.target);
+  }, true);
+  async function fillLogin() {
+    ownedFields = ownedFields.filter((field) => field.node.isConnected);
+    if (!autofill.enabled || fillPending || !ipcRenderer.invoke) return;
+    const target = loginForm();
+    if (!target || attemptedForms.get(target.form) === autofill.revision) return;
+    attemptedForms.set(target.form, autofill.revision);
+    const generation = fillGeneration;
+    fillPending = true;
+    let login;
+    try {
+      login = await ipcRenderer.invoke('discord:credentials');
+      const current = loginForm();
+      if (!login || generation !== fillGeneration || !autofill.enabled || login.revision !== autofill.revision || current?.form !== target.form || current.email !== target.email || current.password !== target.password) return;
+      settingLoginValues = true;
+      setLoginValue(target.email, login.email);
+      ownedFields = [{ node: target.email, value: login.email }];
+      if (target.password.isConnected && !target.password.value) {
+        setLoginValue(target.password, login.password);
+        ownedFields.push({ node: target.password, value: login.password });
+      }
+      // Deliberately no click, submit, keyboard event or authentication API call.
+    } catch { /* The main process reports a bounded, credential-free error if needed. */ }
+    finally {
+      if (login) { login.email = ''; login.password = ''; }
+      settingLoginValues = false; fillPending = false;
+      if (generation !== fillGeneration) schedule();
+    }
+  }
   let targets = new Map();
   let previousDiagnostics = '';
   const knownNames = new Map();
@@ -291,6 +350,11 @@ if (window.top === window && location.origin === 'https://discord.com') {
 
   ipcRenderer.on('discord:options', (_event, value) => {
     options = { compactHeader: value?.compactHeader === true, compactServers: value?.compactServers === true };
+    const nextFill = { enabled: value?.autofill?.enabled === true, revision: typeof value?.autofill?.revision === 'string' ? value.autofill.revision : '' };
+    if (nextFill.enabled !== autofill.enabled || nextFill.revision !== autofill.revision) {
+      fillGeneration++; clearOwnedFields(); attemptedForms = new WeakMap();
+    }
+    autofill = nextFill;
     if (value?.media) applyMedia(value.media);
     schedule();
   });
@@ -318,6 +382,7 @@ if (window.top === window && location.origin === 'https://discord.com') {
   function collect() {
     timer = undefined;
     if (!document.documentElement) { schedule(); return; }
+    void fillLogin();
     let avatar = null;
     for (const selector of avatarSelectors) {
       const image = document.querySelector(selector);
