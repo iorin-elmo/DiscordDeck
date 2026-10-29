@@ -1,6 +1,6 @@
 {
   "name": "discorddeck",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "description": "複数のDiscordアカウントを並べて使うデスクトップアプリ",
   "main": "src/main.cjs",

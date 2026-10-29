@@ -288,7 +288,7 @@ function shutdown() {
   if (state) { try { save(); } catch { /* Do not block shutdown on a settings write error. */ } }
   const sessions = [...new Set([...views.values()].map((view) => view.webContents.session))];
   shutdownPromise = Promise.allSettled(sessions.map(flushSession)).then((results) => {
-    // No credentials are inspected, serialized or logged by the app.
+    // Flush Chromium storage without reading cookie or token values.
     if (results.some((result) => result.status === 'rejected')) console.warn('DiscordDeck: session persistence failed during shutdown.');
     shutdownComplete = true;
     app.quit();
@@ -297,6 +297,9 @@ function shutdown() {
 }
 
 function registerIPC() {
+  ipcMain.on('discord:passkey-policy-error', (event) => {
+    if (remoteEntry(event)) notify('パスキーの自動表示を抑制できませんでした。列を再読み込みしてください。');
+  });
   ipcMain.handle('discord:credentials', async (event) => {
     const entry = remoteEntry(event);
     const url = event.senderFrame?.url;
@@ -384,8 +387,8 @@ function registerIPC() {
         }
         case 'settings': {
           const value = command.settings;
-          if (!value || ('fullscreen' in value && typeof value.fullscreen !== 'boolean') || typeof value.notificationSound !== 'boolean' || typeof value.hideOnBlur !== 'boolean' || !['inputDevice', 'outputDevice'].every((key) => value[key] === null || audioDevice(value[key]))) throw new Error('本体設定の値が無効です。');
-          state.settings = appSettings({ ...value, fullscreen: value.fullscreen ?? state.settings.fullscreen });
+          if (!value || ('fullscreen' in value && typeof value.fullscreen !== 'boolean') || ('suppressPasskeyPrompts' in value && typeof value.suppressPasskeyPrompts !== 'boolean') || typeof value.notificationSound !== 'boolean' || typeof value.hideOnBlur !== 'boolean' || !['inputDevice', 'outputDevice'].every((key) => value[key] === null || audioDevice(value[key]))) throw new Error('本体設定の値が無効です。');
+          state.settings = appSettings({ ...value, fullscreen: value.fullscreen ?? state.settings.fullscreen, suppressPasskeyPrompts: value.suppressPasskeyPrompts ?? state.settings.suppressPasskeyPrompts });
           applyFullscreen();
           updatePrivacy();
           break;

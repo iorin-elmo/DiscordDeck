@@ -1,6 +1,51 @@
-// IPC stays in the isolated sandbox. The page-world hook below only controls browser media APIs.
+// IPC stays in the isolated sandbox. Page-world hooks adjust browser media and passkey APIs.
 // Never reads messages. Login credentials are used only for the opted-in login form autofill below.
 const { ipcRenderer, contextBridge } = require('electron');
+
+// Run before Discord's scripts; conditional WebAuthn can otherwise open a native modal in Electron.
+function installPasskeyPolicy(initial) {
+  const key = Symbol.for('discorddeck.passkeys');
+  if (window[key]) { window[key].update(initial); return; }
+  let suppressed = initial.suppressPasskeyPrompts !== false;
+  const container = navigator.credentials;
+  const nativeGet = container?.get;
+  const pending = new Set();
+  const onLoginPage = () => /^\/login\/?$/.test(location.pathname);
+  const cancel = () => new DOMException('Automatic passkey requests are disabled in DiscordDeck.', 'NotAllowedError');
+  const automatic = (options) => options?.mediation === 'conditional' || navigator.userActivation?.isActive !== true;
+  if (nativeGet) container.get = function (options) {
+    if (this !== container || !options?.publicKey || !onLoginPage()) return nativeGet.apply(this, arguments);
+    const auto = automatic(options);
+    if (suppressed && auto) return Promise.reject(cancel());
+    if (!auto) return nativeGet.apply(this, arguments);
+    const controller = new AbortController();
+    const abort = () => controller.abort(options.signal?.reason);
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener('abort', abort, { once: true });
+    pending.add(controller);
+    const cleanup = () => { pending.delete(controller); options.signal?.removeEventListener('abort', abort); };
+    try { return Promise.resolve(nativeGet.call(this, { ...options, signal: controller.signal })).finally(cleanup); }
+    catch (error) { cleanup(); throw error; }
+  };
+  const PublicKey = window.PublicKeyCredential;
+  if (PublicKey?.isConditionalMediationAvailable) {
+    const available = PublicKey.isConditionalMediationAvailable;
+    PublicKey.isConditionalMediationAvailable = function (...args) {
+      return suppressed && onLoginPage() ? Promise.resolve(false) : available.apply(this, args);
+    };
+  }
+  if (PublicKey?.getClientCapabilities) {
+    const capabilities = PublicKey.getClientCapabilities;
+    PublicKey.getClientCapabilities = async function (...args) {
+      const result = await capabilities.apply(this, args);
+      return suppressed && onLoginPage() ? { ...result, conditionalGet: false } : result;
+    };
+  }
+  Object.defineProperty(window, key, { value: { update(value) {
+    suppressed = value.suppressPasskeyPrompts !== false;
+    if (suppressed && onLoginPage()) for (const controller of pending) controller.abort(cancel());
+  } } });
+}
 
 // Self-contained because contextBridge serializes this function into the page world.
 function installMediaPolicy(initial) {
@@ -177,8 +222,11 @@ function installMediaPolicy(initial) {
 
 if (window.top === window && location.origin === 'https://discord.com') {
   let policyWarning = false;
+  let passkeyWarning = false;
   const applyMedia = (value) => {
     if (!contextBridge?.executeInMainWorld) return;
+    try { contextBridge.executeInMainWorld({ func: installPasskeyPolicy, args: [value] }); }
+    catch { if (!passkeyWarning) { passkeyWarning = true; ipcRenderer.send('discord:passkey-policy-error'); } }
     try { contextBridge.executeInMainWorld({ func: installMediaPolicy, args: [value] }); }
     catch { if (!policyWarning) { policyWarning = true; ipcRenderer.send('discord:media-notice', 'unavailable'); } }
   };

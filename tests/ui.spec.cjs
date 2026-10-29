@@ -85,6 +85,20 @@ test('ログイン情報の保存・変更・削除と、閉じた際の消去�
   await expect(page.locator('#login-email')).toHaveValue(''); await expect(page.locator('#login-password')).toHaveValue('');
 });
 
+test('パスキーの自動表示抑制が初期ONで、OFFの保存・再表示とキャンセルに対応する', async ({ page }) => {
+  await setup(page);
+  await page.getByRole('button', { name: '本体設定', exact: true }).click();
+  await expect(page.locator('#settings-passkeys')).toBeChecked();
+  await page.locator('#settings-passkeys').uncheck();
+  await page.getByRole('button', { name: '設定を保存', exact: true }).click();
+  expect(await page.evaluate(() => window.__calls.find((v) => v.type === 'settings').settings.suppressPasskeyPrompts)).toBe(false);
+  await page.getByRole('button', { name: '本体設定', exact: true }).click();
+  await expect(page.locator('#settings-passkeys')).not.toBeChecked();
+  await page.locator('#settings-passkeys').check(); await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '本体設定', exact: true }).click();
+  await expect(page.locator('#settings-passkeys')).not.toBeChecked();
+});
+
 test('フルスクリーンを設定から保存・解除でき、受信更新で編集が消えず、F11相当の状態変更にも同期する', async ({ page }) => {
   const account = createAccount('A'); await setup(page, [account]);
   await page.getByRole('button', { name: '本体設定', exact: true }).click();
@@ -116,7 +130,7 @@ test('歯車から本体設定を保存し、秘匿表示で名前・会話・�
   await page.screenshot({ path: 'artifacts/app-settings.png' });
   await page.getByRole('button', { name: '設定を保存', exact: true }).click();
   await expect(page.locator('#settings-dialog')).toBeHidden();
-  expect(await page.evaluate(() => window.__calls.find((value) => value.type === 'settings').settings)).toEqual({ fullscreen: false, notificationSound: false, hideOnBlur: true, inputDevice: null, outputDevice: null });
+  expect(await page.evaluate(() => window.__calls.find((value) => value.type === 'settings').settings)).toEqual({ fullscreen: false, suppressPasskeyPrompts: true, notificationSound: false, hideOnBlur: true, inputDevice: null, outputDevice: null });
   await page.getByRole('button', { name: '本体設定', exact: true }).click();
   await expect(page.locator('#settings-sound')).not.toBeChecked();
   await page.evaluate(() => window.__privacy(true));

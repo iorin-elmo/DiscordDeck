@@ -119,7 +119,7 @@ function audioDevice(value) {
 }
 
 function appSettings(value = {}) {
-  return { fullscreen: value?.fullscreen === true, notificationSound: value?.notificationSound !== false, hideOnBlur: value?.hideOnBlur === true, inputDevice: audioDevice(value?.inputDevice), outputDevice: audioDevice(value?.outputDevice) };
+  return { fullscreen: value?.fullscreen === true, suppressPasskeyPrompts: value?.suppressPasskeyPrompts !== false, notificationSound: value?.notificationSound !== false, hideOnBlur: value?.hideOnBlur === true, inputDevice: audioDevice(value?.inputDevice), outputDevice: audioDevice(value?.outputDevice) };
 }
 
 function normalizeState(raw = {}) {

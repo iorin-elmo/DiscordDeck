@@ -268,7 +268,7 @@ test('本体設定を保存し、通知音を通話全体のミュートから�
   const ctx = await boot();
   try {
     await ctx.command({ type: 'add', name: 'A' });
-    const settings = { fullscreen: false, notificationSound: false, hideOnBlur: true, inputDevice: { label: 'USBマイク', ordinal: 0 }, outputDevice: { label: 'USBスピーカー', ordinal: 1 } };
+    const settings = { fullscreen: false, suppressPasskeyPrompts: false, notificationSound: false, hideOnBlur: true, inputDevice: { label: 'USBマイク', ordinal: 0 }, outputDevice: { label: 'USBスピーカー', ordinal: 1 } };
     assert.equal((await ctx.command({ type: 'settings', settings })).ok, true);
     const saved = JSON.parse(fs.readFileSync(path.join(ctx.data, 'deck.json'), 'utf8'));
     assert.deepEqual(saved.settings, settings);
@@ -276,6 +276,7 @@ test('本体設定を保存し、通知音を通話全体のミュートから�
     assert.equal(contents.muted, false);
     assert.equal(contents.messages.at(-1).channel, 'discord:options');
     assert.equal(contents.messages.at(-1).value.media.notificationSound, false);
+    assert.equal(contents.messages.at(-1).value.media.suppressPasskeyPrompts, false);
     contents.mainFrame.url = 'https://discord.com/channels/@me';
     const early = { sender: contents, senderFrame: contents.mainFrame };
     ctx.listeners.get('discord:media-options')(early);

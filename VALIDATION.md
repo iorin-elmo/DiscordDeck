@@ -2,6 +2,14 @@
 
 検証日：2026年10月30日。Windows x64、Node.js v24.12.0、Electron 45.1.0。
 
+## 0.8.1の確認
+
+単体テスト44件、Chromeのブラウザテスト30件が成功しました。初期設定での自動表示抑制、OFFの保存と再表示、設定ダイアログでのキャンセルを確認しています。
+
+実際のプリロードをChromeで動かし、WebAuthnのネイティブAPIを代替にして、条件付き要求とユーザー操作なしの要求がネイティブAPIへ到達しないことを確認しました。手動操作直後の通常要求、登録、別の認証方式、ログイン以外のページは通ります。設定OFFでの復元、ONにした際の待機中の自動要求の中止、元のAbortSignalの引き継ぎ、メール・パスワードの自動入力との併用も確認しました。認証結果を偽造して通す処理はありません。
+
+ユーザーの報告はログイン画面の初期表示・自動入力の時点でWindowsのパスキー選択が出るというものです。Chromeの新規一時コンテキストで公式ログインページを確認しましたが、この自動要求は再現しませんでした。既存のElectron起動制限により、実際のWindowsの選択画面が抑制されることは未検証です。[CredentialsContainer.getの仕様](https://developer.mozilla.org/en-US/docs/Web/API/CredentialsContainer/get)と[条件付きパスキー認証の説明](https://developer.chrome.com/docs/modern-web-guidance/guides/security/passkey-authentication)を確認し、ログインページの自動要求に限定した対策にしています。
+
 ## 0.8.0の確認
 
 単体テスト44件、Chromeのブラウザテスト24件で検証しました。ログイン情報の保存・変更・削除・自動入力ON/OFF、保存後と閉じた後の入力欄の消去、アカウント設定の上にログイン情報ダイアログを重ねた際にネイティブの列を再表示しないことを確認しています。テスト画像 `artifacts/login-credentials-settings.png` の値はテスト専用です。

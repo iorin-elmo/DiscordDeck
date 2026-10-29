@@ -469,6 +469,7 @@ $('#settings-button').addEventListener('click', () => {
   $('#settings-fullscreen').checked = settings.fullscreen;
   $('#settings-sound').checked = settings.notificationSound;
   $('#settings-privacy').checked = settings.hideOnBlur;
+  $('#settings-passkeys').checked = settings.suppressPasskeyPrompts;
   populateDevices('#settings-input', 'audioinput', settings.inputDevice);
   populateDevices('#settings-output', 'audiooutput', settings.outputDevice);
   $('#settings-error').textContent = ''; $('#device-status').textContent = '';
@@ -512,7 +513,7 @@ $('#settings-form').addEventListener('submit', async (event) => {
   event.preventDefault(); if (settingsBusy || $('#save-settings').disabled) return;
   settingsBusy = true;
   for (const button of $$('button', settingsDialog)) button.disabled = true;
-  const result = await command({ type: 'settings', settings: { fullscreen: $('#settings-fullscreen').checked, notificationSound: $('#settings-sound').checked, hideOnBlur: $('#settings-privacy').checked, inputDevice: JSON.parse($('#settings-input').value), outputDevice: JSON.parse($('#settings-output').value) } }, false);
+  const result = await command({ type: 'settings', settings: { fullscreen: $('#settings-fullscreen').checked, suppressPasskeyPrompts: $('#settings-passkeys').checked, notificationSound: $('#settings-sound').checked, hideOnBlur: $('#settings-privacy').checked, inputDevice: JSON.parse($('#settings-input').value), outputDevice: JSON.parse($('#settings-output').value) } }, false);
   settingsBusy = false;
   for (const button of $$('button', settingsDialog)) button.disabled = false;
   if (result.ok) { closeDialog(settingsDialog); notice('本体設定を保存しました。'); }
