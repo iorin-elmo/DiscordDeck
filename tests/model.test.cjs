@@ -74,9 +74,9 @@ test('アプリの版番号だけをブラウザ識別文字列から外し、�
 });
 
 test('旧設定に本体設定の既定値を補い、機器名と同名機器の順序だけを保存する', () => {
-  assert.deepEqual(normalizeState().settings, { fullscreen: false, suppressPasskeyPrompts: true, notificationSound: true, hideOnBlur: false, inputDevice: null, outputDevice: null });
+  assert.deepEqual(normalizeState().settings, { fullscreen: false, taskbarBadge: true, suppressPasskeyPrompts: true, notificationSound: true, hideOnBlur: false, inputDevice: null, outputDevice: null });
   const settings = normalizeState({ settings: { notificationSound: false, hideOnBlur: true, inputDevice: { label: '日本語マイク', ordinal: 0, deviceId: 'account-specific' }, outputDevice: { label: 'USB', ordinal: -1 } } }).settings;
-  assert.deepEqual(settings, { fullscreen: false, suppressPasskeyPrompts: true, notificationSound: false, hideOnBlur: true, inputDevice: { label: '日本語マイク', ordinal: 0 }, outputDevice: null });
+  assert.deepEqual(settings, { fullscreen: false, taskbarBadge: true, suppressPasskeyPrompts: true, notificationSound: false, hideOnBlur: true, inputDevice: { label: '日本語マイク', ordinal: 0 }, outputDevice: null });
   assert.equal(normalizeState({ settings: { suppressPasskeyPrompts: false } }).settings.suppressPasskeyPrompts, false);
 });
 

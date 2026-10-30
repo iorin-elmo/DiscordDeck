@@ -4,6 +4,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { resolveExternalApp } = require('./external-app.cjs');
 const { CredentialStore } = require('./credentials.cjs');
+const { summarizeUnread, renderBadge } = require('./taskbar.cjs');
 const { HOME, COLORS, MODES, MAX_ACCOUNTS, isDiscordURL, channelURL, externalURL, label, createAccount, normalizeState, partitionFor, clampBounds, discordAvatarURL, customAvatar, unreadFromTitle, reorderAccounts, requestedMedia, mediaEnabled, displayText, normalizeNavigation, normalizeColor, appSettings, audioDevice, stableUserAgent } = require('./model.cjs');
 
 app.setName('DiscordDeck');
@@ -21,6 +22,10 @@ const discordCompactCSS = fs.readFileSync(path.join(__dirname, 'discord-compact.
 const views = new Map();
 const statuses = new Map();
 const metadata = new Map();
+const titleUnread = new Map();
+const overlayImages = new Map();
+let overlayKey;
+let overlayWarning = false;
 const mediaGrants = new Map();
 const mediaPrompts = new Map();
 const pendingNavigation = new Map();
@@ -75,10 +80,38 @@ function scheduleSave() {
 
 function privacyHidden() { return Boolean(state.settings.hideOnBlur && win && !win.isFocused()); }
 function mediaOptions() { return { ...state.settings, privacyHidden: privacyHidden() }; }
-function snapshot() {
-  return { ...state, privacyHidden: privacyHidden(), accounts: state.accounts.map((a) => ({ ...a, ...metadata.get(a.id), ...credentials.status(a.id), status: statuses.get(a.id) ?? 'loading' })), maxAccounts: MAX_ACCOUNTS, colors: COLORS };
+function unreadFor(id) {
+  const dom = metadata.get(id), title = titleUnread.get(id);
+  const unreadCount = Math.max(dom?.unreadCount ?? 0, title?.unreadCount ?? 0);
+  return { unreadCount, hasUnread: unreadCount > 0 || dom?.hasUnread === true || title?.hasUnread === true };
 }
-function emit() { if (win && !win.isDestroyed()) win.webContents.send('deck:state', snapshot()); }
+function updateTaskbarBadge(force = false) {
+  if (process.platform !== 'win32' || !win || win.isDestroyed() || !state) return;
+  const summary = state.settings.taskbarBadge ? summarizeUnread(state.accounts.map((entry) => unreadFor(entry.id))) : { label: null, description: '' };
+  const key = JSON.stringify([summary.label, summary.description]);
+  if (!force && key === overlayKey) return;
+  try {
+    let image = null;
+    if (summary.label) {
+      image = overlayImages.get(summary.label);
+      if (!image) {
+        image = nativeImage.createFromBuffer(renderBadge(summary.label));
+        for (const scaleFactor of [2, 3]) image.addRepresentation({ scaleFactor, buffer: renderBadge(summary.label, 16 * scaleFactor) });
+        if (image.isEmpty()) throw new Error('Invalid badge image');
+        overlayImages.set(summary.label, image);
+      }
+    }
+    win.setOverlayIcon(image, summary.description);
+    overlayKey = key;
+  } catch {
+    overlayKey = undefined;
+    if (!overlayWarning) { overlayWarning = true; console.warn('DiscordDeck: taskbar badge could not be updated.'); }
+  }
+}
+function snapshot() {
+  return { ...state, privacyHidden: privacyHidden(), accounts: state.accounts.map((a) => ({ ...a, ...metadata.get(a.id), ...unreadFor(a.id), ...credentials.status(a.id), status: statuses.get(a.id) ?? 'loading' })), maxAccounts: MAX_ACCOUNTS, colors: COLORS };
+}
+function emit() { if (win && !win.isDestroyed()) { updateTaskbarBadge(); win.webContents.send('deck:state', snapshot()); } }
 function notify(message) { if (win && !win.isDestroyed()) win.webContents.send('deck:notice', message); }
 function status(id, value) { if (!views.has(id)) return; statuses.set(id, value); emit(); }
 
@@ -221,9 +254,9 @@ function createView(entry) {
   wc.setAudioMuted(entry.muted);
   wc.on('page-title-updated', (_event, title) => {
     const next = unreadFromTitle(title);
-    const previous = metadata.get(entry.id);
+    const previous = titleUnread.get(entry.id);
     if (previous?.unreadCount !== next.unreadCount || previous?.hasUnread !== next.hasUnread) {
-      metadata.set(entry.id, { ...previous, ...next }); emit();
+      titleUnread.set(entry.id, next); emit();
     }
   });
   wc.setWindowOpenHandler(({ url }) => { void openExternal(url); return { action: 'deny' }; });
@@ -387,8 +420,8 @@ function registerIPC() {
         }
         case 'settings': {
           const value = command.settings;
-          if (!value || ('fullscreen' in value && typeof value.fullscreen !== 'boolean') || ('suppressPasskeyPrompts' in value && typeof value.suppressPasskeyPrompts !== 'boolean') || typeof value.notificationSound !== 'boolean' || typeof value.hideOnBlur !== 'boolean' || !['inputDevice', 'outputDevice'].every((key) => value[key] === null || audioDevice(value[key]))) throw new Error('本体設定の値が無効です。');
-          state.settings = appSettings({ ...value, fullscreen: value.fullscreen ?? state.settings.fullscreen, suppressPasskeyPrompts: value.suppressPasskeyPrompts ?? state.settings.suppressPasskeyPrompts });
+          if (!value || ('fullscreen' in value && typeof value.fullscreen !== 'boolean') || ('taskbarBadge' in value && typeof value.taskbarBadge !== 'boolean') || ('suppressPasskeyPrompts' in value && typeof value.suppressPasskeyPrompts !== 'boolean') || typeof value.notificationSound !== 'boolean' || typeof value.hideOnBlur !== 'boolean' || !['inputDevice', 'outputDevice'].every((key) => value[key] === null || audioDevice(value[key]))) throw new Error('本体設定の値が無効です。');
+          state.settings = appSettings({ ...value, fullscreen: value.fullscreen ?? state.settings.fullscreen, taskbarBadge: value.taskbarBadge ?? state.settings.taskbarBadge, suppressPasskeyPrompts: value.suppressPasskeyPrompts ?? state.settings.suppressPasskeyPrompts });
           applyFullscreen();
           updatePrivacy();
           break;
@@ -473,12 +506,13 @@ function registerIPC() {
           win.contentView.removeChildView(view);
           view.webContents.close();
           views.delete(entry.id); statuses.delete(entry.id);
-          metadata.delete(entry.id); mediaGrants.delete(entry.id);
+          metadata.delete(entry.id); titleUnread.delete(entry.id); mediaGrants.delete(entry.id);
           pendingNavigation.delete(entry.id);
           // Remove the metadata even if clearing the Chromium profile fails, so it cannot be reused accidentally.
           state.accounts = state.accounts.filter((a) => a.id !== entry.id);
           if (state.activeId === entry.id) state.activeId = state.accounts[0]?.id ?? null;
           save();
+          emit();
           try {
             await ses.closeAllConnections();
             await ses.clearStorageData();
@@ -583,7 +617,7 @@ async function createWindow() {
   win.on('enter-full-screen', syncFullscreen);
   win.on('leave-full-screen', syncFullscreen);
   win.on('minimize', hideViews);
-  win.on('restore', () => win.webContents.send('deck:layout'));
+  win.on('restore', () => { win.webContents.send('deck:layout'); updateTaskbarBadge(true); });
   win.on('close', (event) => {
     if (shutdownComplete) return;
     event.preventDefault();
@@ -596,6 +630,7 @@ async function createWindow() {
   for (const entry of state.accounts) createView(entry);
   await win.loadFile(shellPath);
   win.show();
+  updateTaskbarBadge(true);
   if (startupWarning) notify(startupWarning);
 }
 

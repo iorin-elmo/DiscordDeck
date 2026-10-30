@@ -47,6 +47,7 @@ async function boot(options = {}) {
       windows.push(this);
     }
     removeMenu() {} show() {} focus() {} restore() {}
+    setOverlayIcon(image, description) { this.overlay = { image, description }; this.overlayUpdates = (this.overlayUpdates || 0) + 1; }
     isFocused() { return this.focused !== false; }
     isDestroyed() { return false; } isMinimized() { return false; } isMaximized() { return false; }
     isFullScreen() { return this.fullscreen; }
@@ -68,6 +69,7 @@ async function boot(options = {}) {
     ipcMain: { handle: (key, fn) => handlers.set(key, fn), on: (key, fn) => listeners.set(key, fn) },
     dialog: { async showMessageBox() { return { response: 1 }; }, showErrorBox(_title, message) { throw new Error(message); } },
     shell: { async openExternal(url) { links.push(url); }, async openPath() {} },
+    nativeImage: { createFromBuffer(data) { return { data, representations: [], addRepresentation(value) { this.representations.push(value); }, isEmpty() { return false; } }; } },
     safeStorage: {
       async isAsyncEncryptionAvailable() { return true; },
       async encryptStringAsync(value) { const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', Buffer.alloc(32, 7), iv); const bytes = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]); return Buffer.concat([iv, cipher.getAuthTag(), bytes]); },
@@ -77,7 +79,7 @@ async function boot(options = {}) {
   const mainPath = path.join(__dirname, '../src/main.cjs'); const realRequire = createRequire(mainPath);
   vm.runInNewContext(fs.readFileSync(mainPath, 'utf8'), {
     require: (name) => name === 'electron' ? electron : name === './external-app.cjs' ? { resolveExternalApp: options.resolveExternalApp ?? (async () => ({ key: '1'.repeat(64), name: 'ブラウザ' })) } : realRequire(name), __dirname: path.dirname(mainPath),
-    process: { env: { DISCORDDECK_TEST: '1' } }, Buffer, URL, console, setTimeout, clearTimeout,
+    process: { platform: 'win32', env: { DISCORDDECK_TEST: '1' } }, Buffer, URL, console, setTimeout, clearTimeout,
   }, { filename: mainPath });
   await new Promise(setImmediate);
   const win = windows[0];
@@ -90,6 +92,56 @@ async function boot(options = {}) {
     cleanup: () => { app.emit('before-quit', { preventDefault() {} }); win.emit('closed'); },
   };
 }
+
+test('タスクバーで全アカウントの未読を集計し、タイトルとDOMを二重計上せず、既読で消す', async () => {
+  const ctx = await boot();
+  try {
+    await ctx.command({ type: 'add', name: 'A' }); await ctx.command({ type: 'add', name: 'B' });
+    const [a, b] = ctx.win.contentView.children.map((view) => view.webContents);
+    for (const wc of [a, b]) wc.mainFrame.url = 'https://discord.com/channels/@me';
+    const report = (wc, count, unread = count > 0) => ctx.listeners.get('discord:metadata')({ sender: wc, senderFrame: wc.mainFrame }, { avatar: null, unreadCount: count, hasUnread: unread });
+    report(a, 3); a.emit('page-title-updated', {}, '(3) Discord');
+    b.emit('page-title-updated', {}, '(7) Discord');
+    assert.equal(ctx.win.overlay.description, '全アカウントの未読通知: 10件');
+    assert.ok(ctx.win.overlay.image); assert.equal(ctx.win.overlay.image.data.readUInt32BE(16), 16);
+    assert.equal(ctx.win.overlay.image.representations.length, 2);
+    // A channel-title change must not erase a still-visible Discord notification badge.
+    a.emit('page-title-updated', {}, 'Discord | #general');
+    assert.equal(ctx.win.overlay.description, '全アカウントの未読通知: 10件');
+    assert.equal(ctx.get().accounts[0].unreadCount, 3);
+    report(a, 0); assert.equal(ctx.win.overlay.description, '全アカウントの未読通知: 7件');
+    const before = ctx.win.overlayUpdates;
+    await ctx.command({ type: 'activate', id: ctx.get().accounts[1].id });
+    assert.equal(ctx.win.overlayUpdates, before);
+    // Updates also apply while minimized, from the account not currently selected.
+    ctx.win.isMinimized = () => true;
+    report(a, 2); assert.equal(ctx.win.overlay.description, '全アカウントの未読通知: 9件');
+    report(a, 0); b.emit('page-title-updated', {}, 'Discord');
+    assert.equal(ctx.win.overlay.image, null); assert.equal(ctx.win.overlay.description, '');
+  } finally { ctx.cleanup(); }
+});
+
+test('タスクバーの不明件数・99+・削除・設定OFF/ON・ウィンドウ復元を反映する', async () => {
+  const ctx = await boot();
+  try {
+    await ctx.command({ type: 'add', name: 'A' }); await ctx.command({ type: 'add', name: 'B' });
+    const wc = ctx.win.contentView.children[0].webContents;
+    wc.emit('page-title-updated', {}, '• Discord');
+    assert.ok(ctx.win.overlay.image); assert.equal(ctx.win.overlay.description, '件数不明の未読通知があります');
+    wc.emit('page-title-updated', {}, '(100) Discord');
+    const badge = ctx.win.overlay.image;
+    assert.equal(ctx.win.overlay.description, '全アカウントの未読通知: 100件');
+    wc.emit('page-title-updated', {}, '(101) Discord'); assert.equal(ctx.win.overlay.image, badge);
+    await ctx.command({ type: 'settings', settings: { ...ctx.get().settings, taskbarBadge: false } });
+    assert.equal(ctx.win.overlay.image, null);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(ctx.data, 'deck.json'), 'utf8')).settings.taskbarBadge, false);
+    wc.emit('page-title-updated', {}, '(102) Discord'); assert.equal(ctx.win.overlay.image, null);
+    await ctx.command({ type: 'settings', settings: { ...ctx.get().settings, taskbarBadge: true } });
+    assert.equal(ctx.win.overlay.image, badge); assert.equal(ctx.win.overlay.description, '全アカウントの未読通知: 102件');
+    const before = ctx.win.overlayUpdates; ctx.win.emit('restore'); assert.equal(ctx.win.overlayUpdates, before + 1);
+    await ctx.command({ type: 'remove', id: ctx.get().accounts[0].id }); assert.equal(ctx.win.overlay.image, null);
+  } finally { ctx.cleanup(); }
+});
 
 test('ログイン情報を保存・変更・削除し、対応する公式ログイン画面にだけ返す', async () => {
   const ctx = await boot();
@@ -268,7 +320,7 @@ test('本体設定を保存し、通知音を通話全体のミュートから�
   const ctx = await boot();
   try {
     await ctx.command({ type: 'add', name: 'A' });
-    const settings = { fullscreen: false, suppressPasskeyPrompts: false, notificationSound: false, hideOnBlur: true, inputDevice: { label: 'USBマイク', ordinal: 0 }, outputDevice: { label: 'USBスピーカー', ordinal: 1 } };
+    const settings = { fullscreen: false, taskbarBadge: true, suppressPasskeyPrompts: false, notificationSound: false, hideOnBlur: true, inputDevice: { label: 'USBマイク', ordinal: 0 }, outputDevice: { label: 'USBスピーカー', ordinal: 1 } };
     assert.equal((await ctx.command({ type: 'settings', settings })).ok, true);
     const saved = JSON.parse(fs.readFileSync(path.join(ctx.data, 'deck.json'), 'utf8'));
     assert.deepEqual(saved.settings, settings);
@@ -438,7 +490,7 @@ test('本人のDiscordメインフレームからの未読とアイコンだけ�
     const handler = ctx.listeners.get('discord:metadata');
     const value = { avatar: 'https://cdn.discordapp.com/avatars/123/test.webp', unreadCount: 3, hasUnread: true };
     handler(event, value);
-    assert.equal(ctx.get().accounts[0].unreadCount, 3); assert.equal(ctx.get().accounts[1].unreadCount, undefined);
+    assert.equal(ctx.get().accounts[0].unreadCount, 3); assert.equal(ctx.get().accounts[1].unreadCount, 0);
     assert.equal(ctx.get().accounts[0].discordAvatar, 'https://cdn.discordapp.com/avatars/123/test.webp?size=128');
     handler(ctx.event, { ...value, unreadCount: 99 });
     handler({ sender: contents, senderFrame: { url: contents.mainFrame.url } }, { ...value, unreadCount: 98 });
