@@ -1,6 +1,6 @@
 {
   "name": "discorddeck",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "description": "複数のDiscordアカウントを並べて使うデスクトップアプリ",
   "main": "src/main.cjs",
@@ -13,7 +13,7 @@
     "test:e2e": "playwright test",
     "test:ui": "playwright test --config playwright.ui.config.cjs",
     "test:live": "node scripts/smoke-live.cjs",
-    "dist:win": "electron-builder --win portable --x64"
+    "dist:win": "electron-builder --win nsis portable --x64"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
@@ -25,7 +25,17 @@
     "productName": "DiscordDeck",
     "directories": { "output": "dist" },
     "files": ["src/**/*", "package.json"],
-    "win": { "target": ["portable"], "icon": "src/assets/app-icon.ico", "signExecutable": false },
+    "win": { "target": ["nsis", "portable"], "icon": "src/assets/app-icon.ico", "signExecutable": false },
+    "nsis": {
+      "artifactName": "DiscordDeck-${version}-Setup.exe",
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "DiscordDeck",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": false
+    },
     "portable": { "artifactName": "DiscordDeck-${version}-portable.exe" }
   }
 }

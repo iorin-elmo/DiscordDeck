@@ -8,6 +8,8 @@ const { summarizeUnread, renderBadge } = require('./taskbar.cjs');
 const { HOME, COLORS, MODES, MAX_ACCOUNTS, isDiscordURL, channelURL, externalURL, label, createAccount, normalizeState, partitionFor, clampBounds, discordAvatarURL, customAvatar, unreadFromTitle, reorderAccounts, requestedMedia, mediaEnabled, displayText, normalizeNavigation, normalizeColor, appSettings, audioDevice, stableUserAgent } = require('./model.cjs');
 
 app.setName('DiscordDeck');
+// Match the installer's shortcut identity across versions and executable paths.
+if (process.platform === 'win32') app.setAppUserModelId('local.discorddeck.desktop');
 const testing = !app.isPackaged && process.env.DISCORDDECK_TEST === '1';
 const dataDirectory = testing ? (process.env.DISCORDDECK_TEST_DATA || app.getPath('userData')) : path.join(app.getPath('appData'), 'DiscordDeck');
 fs.mkdirSync(dataDirectory, { recursive: true });

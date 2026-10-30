@@ -63,6 +63,7 @@ async function boot(options = {}) {
   }
   const app = new EventEmitter();
   app.paths = new Map();
+  app.setAppUserModelId = (value) => { assert.equal(windows.length, 0); app.appUserModelId = value; };
   Object.assign(app, { userAgentFallback: `Mozilla/5.0 DiscordDeck/${options.version || '0.6.1'} Chrome/150.0.0.0 Electron/45.1.0`, setName() {}, setPath(name, value) { this.paths.set(name, value); }, getPath: () => data, isPackaged: false, requestSingleInstanceLock: () => true, whenReady: async () => {}, quit() { this.quitCalls = (this.quitCalls || 0) + 1; } });
   const electron = {
     app, BrowserWindow: Window, WebContentsView: View, session: { fromPartition: getSession }, Menu: { setApplicationMenu() {} },
@@ -214,7 +215,7 @@ test('列の削除時は、その列の保存ログイン情報も削除する',
   } finally { ctx.cleanup(); }
 });
 
-test('アプリ更新で保存先・列のセッション識別子・ブラウザ識別文字列を変えない', async () => {
+test('アプリ更新でタスクバーの識別子・保存先・列のセッション識別子・ブラウザ識別文字列を変えない', async () => {
   const first = await boot({ version: '0.6.1' });
   let second;
   try {
@@ -228,6 +229,9 @@ test('アプリ更新で保存先・列のセッション識別子・ブラウ�
     assert.equal(second.electron.app.paths.get('userData'), first.data);
     assert.equal(second.electron.app.paths.get('sessionData'), first.data);
     assert.equal(second.electron.app.userAgentFallback, ua);
+    const installerId = require('../package.json').build.appId;
+    assert.equal(first.electron.app.appUserModelId, installerId);
+    assert.equal(second.electron.app.appUserModelId, installerId);
   } finally { if (second) second.cleanup(); else first.cleanup(); }
 });
 
