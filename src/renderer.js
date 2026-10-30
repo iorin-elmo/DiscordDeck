@@ -156,6 +156,7 @@ function render(next) {
   if (settingsDialog.open && displayedFullscreen !== next.settings.fullscreen) $('#settings-fullscreen').checked = next.settings.fullscreen;
   displayedFullscreen = next.settings.fullscreen;
   state = next;
+  renderUpdates();
   if (accountDialog.open) updateCredentialStatus();
   document.body.classList.toggle('privacy-hidden', state.privacyHidden === true);
   $('#privacy-screen').hidden = state.privacyHidden !== true;
@@ -464,6 +465,28 @@ function populateDevices(selector, kind, choice) {
   if (choice && !options.some((option) => option.value === value)) options.push(new Option(`${choice.label}（保存済み・一覧未確認）`, value));
   select.replaceChildren(...options); select.value = value;
 }
+function renderUpdates() {
+  const update = state?.updates || { enabled: false, phase: 'idle', unavailable: 'アプリ内更新はインストーラー版で使えます。' };
+  $('#update-version').textContent = update.currentVersion ? `v${update.currentVersion}` : '';
+  const messages = {
+    idle: '「更新を確認」で最新版をチェックできます。', checking: 'GitHubで最新版を確認しています…',
+    current: '最新バージョンです。', available: `v${update.latestVersion}をダウンロードできます。`,
+    downloading: `v${update.latestVersion}をダウンロード中… ${update.progress}%`, downloaded: `v${update.latestVersion}の準備ができました。`,
+    installing: 'ログイン状態を保存し、更新して再起動します…', error: update.error,
+  };
+  $('#update-status').textContent = update.enabled ? messages[update.phase] || '' : update.unavailable;
+  $('#check-update').disabled = settingsBusy || !update.enabled || !['idle', 'current', 'available', 'error'].includes(update.phase);
+  $('#download-update').hidden = update.phase !== 'available';
+  $('#download-update').disabled = settingsBusy;
+  $('#install-update').hidden = update.phase !== 'downloaded';
+  $('#install-update').disabled = settingsBusy;
+  $('#update-progress').hidden = !['downloading', 'downloaded'].includes(update.phase);
+  $('#update-progress').value = update.progress || 0;
+}
+$('#check-update').addEventListener('click', () => command({ type: 'update-check' }));
+$('#download-update').addEventListener('click', () => command({ type: 'update-download' }));
+$('#install-update').addEventListener('click', () => command({ type: 'update-install' }));
+$('#update-releases').addEventListener('click', () => command({ type: 'update-releases' }));
 $('#settings-button').addEventListener('click', () => {
   const settings = state.settings;
   $('#settings-fullscreen').checked = settings.fullscreen;
@@ -517,6 +540,7 @@ $('#settings-form').addEventListener('submit', async (event) => {
   const result = await command({ type: 'settings', settings: { fullscreen: $('#settings-fullscreen').checked, taskbarBadge: $('#settings-taskbar-badge').checked, suppressPasskeyPrompts: $('#settings-passkeys').checked, notificationSound: $('#settings-sound').checked, hideOnBlur: $('#settings-privacy').checked, inputDevice: JSON.parse($('#settings-input').value), outputDevice: JSON.parse($('#settings-output').value) } }, false);
   settingsBusy = false;
   for (const button of $$('button', settingsDialog)) button.disabled = false;
+  renderUpdates();
   if (result.ok) { closeDialog(settingsDialog); notice('本体設定を保存しました。'); }
   else $('#settings-error').textContent = result.error;
 });

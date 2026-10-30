@@ -16,12 +16,16 @@ async function setup(page, accounts = []) {
     window.__calls = calls;
     window.__privacy = (hidden) => { state.privacyHidden = hidden; onState?.(state); };
     window.__fullscreen = (value) => { state.settings = { ...state.settings, fullscreen: value }; onState?.(state); };
+    window.__updateState = (patch) => { state.updates = { enabled: true, phase: 'idle', currentVersion: '0.10.0', latestVersion: '', progress: 0, ...state.updates, ...patch }; onState?.(state); };
     window.__updateAccount = (id, patch) => { Object.assign(state.accounts.find((a) => a.id === id), patch); onState?.(state); };
     // contextBridge exposes a non-configurable global. A top-level `const deck` must not shadow it.
     Object.defineProperty(window, 'deck', { configurable: false, writable: false, value: {
       getState: async () => state,
       command: async (value) => {
         calls.push(structuredClone(value));
+        if (value.type === 'update-check') state.updates = { enabled: true, currentVersion: '0.10.0', latestVersion: '0.11.0', phase: 'available', progress: 0 };
+        if (value.type === 'update-download') state.updates.phase = 'downloading';
+        if (value.type === 'update-install') state.updates.phase = 'installing';
         if (value.type === 'credentials-save') Object.assign(state.accounts.find((a) => a.id === value.id), { credentialsSaved: true, autofillEnabled: value.enabled });
         if (value.type === 'credentials-delete') Object.assign(state.accounts.find((a) => a.id === value.id), { credentialsSaved: false, autofillEnabled: false });
         if (value.type === 'settings') state.settings = value.settings;
@@ -52,6 +56,42 @@ async function setup(page, accounts = []) {
   await expect(page.locator('[data-layout][aria-pressed]').first()).toBeVisible();
   expect(pageErrors).toEqual([]);
 }
+
+test('本体設定で更新を確認・ダウンロード・再起動し、進捗とエラーを表示する', async ({ page }) => {
+  await setup(page);
+  await page.evaluate(() => window.__updateState({}));
+  await page.locator('#settings-button').click();
+  await page.locator('#check-update').click();
+  await expect(page.locator('#update-status')).toContainText('v0.11.0');
+  await expect(page.locator('#download-update')).toBeVisible();
+  await expect(page.locator('#install-update')).toBeHidden();
+  await page.locator('#download-update').click();
+  await expect(page.locator('#check-update')).toBeDisabled();
+  await page.evaluate(() => window.__updateState({ phase: 'downloading', progress: 37 }));
+  await expect(page.locator('#update-status')).toContainText('37%');
+  await expect(page.locator('#update-progress')).toHaveAttribute('value', '37');
+  await page.locator('#settings-dialog').getByRole('button', { name: 'キャンセル', exact: true }).click();
+  await page.evaluate(() => window.__updateState({ phase: 'downloaded', progress: 100 }));
+  await page.locator('#settings-button').click();
+  await expect(page.locator('#install-update')).toBeVisible();
+  await page.locator('#install-update').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'artifacts/app-update-ready.png' });
+  await page.locator('#install-update').click();
+  await expect(page.locator('#update-status')).toContainText('ログイン状態を保存');
+  await page.evaluate(() => window.__updateState({ phase: 'error', error: '接続を確認してください。' }));
+  await expect(page.locator('#update-status')).toHaveText('接続を確認してください。');
+  await expect(page.locator('#check-update')).toBeEnabled();
+  const updates = await page.evaluate(() => window.__calls.filter((call) => call.type.startsWith('update-')).map((call) => call.type));
+  expect(updates).toEqual(['update-check', 'update-download', 'update-install']);
+});
+
+test('開発版では更新を無効にし、配布ページへの案内を表示する', async ({ page }) => {
+  await setup(page); await page.locator('#settings-button').click();
+  await expect(page.locator('#check-update')).toBeDisabled();
+  await expect(page.locator('#update-status')).toContainText('インストーラー版');
+  await page.locator('#update-releases').click();
+  expect(await page.evaluate(() => window.__calls.some((call) => call.type === 'update-releases'))).toBe(true);
+});
 
 test('ログイン情報の保存・変更・削除と、閉じた際の消去、重ねた設定ダイアログを扱う', async ({ page }) => {
   await setup(page, [createAccount('A')]);

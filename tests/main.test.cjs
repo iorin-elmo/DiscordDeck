@@ -63,8 +63,14 @@ async function boot(options = {}) {
   }
   const app = new EventEmitter();
   app.paths = new Map();
+  app.getVersion = () => options.version || '0.10.0';
   app.setAppUserModelId = (value) => { assert.equal(windows.length, 0); app.appUserModelId = value; };
-  Object.assign(app, { userAgentFallback: `Mozilla/5.0 DiscordDeck/${options.version || '0.6.1'} Chrome/150.0.0.0 Electron/45.1.0`, setName() {}, setPath(name, value) { this.paths.set(name, value); }, getPath: () => data, isPackaged: false, requestSingleInstanceLock: () => true, whenReady: async () => {}, quit() { this.quitCalls = (this.quitCalls || 0) + 1; } });
+  Object.assign(app, { userAgentFallback: `Mozilla/5.0 DiscordDeck/${options.version || '0.6.1'} Chrome/150.0.0.0 Electron/45.1.0`, setName() {}, setPath(name, value) { this.paths.set(name, value); }, getPath: () => data, isPackaged: options.installed === true, requestSingleInstanceLock: () => true, whenReady: async () => {}, quit() { this.quitCalls = (this.quitCalls || 0) + 1; } });
+  const autoUpdater = new EventEmitter();
+  autoUpdater.checkForUpdates = async () => { autoUpdater.checks = (autoUpdater.checks || 0) + 1; autoUpdater.emit('update-available', { version: '0.11.0' }); };
+  autoUpdater.downloadUpdate = async () => { autoUpdater.downloads = (autoUpdater.downloads || 0) + 1; autoUpdater.emit('update-downloaded', { version: '0.11.0' }); };
+  autoUpdater.quitAndInstall = () => { autoUpdater.installed = true; app.quit(); };
+  if (options.installed) fs.writeFileSync(path.join(data, 'Uninstall DiscordDeck.exe'), 'test fixture, never executed');
   const electron = {
     app, BrowserWindow: Window, WebContentsView: View, session: { fromPartition: getSession }, Menu: { setApplicationMenu() {} },
     ipcMain: { handle: (key, fn) => handlers.set(key, fn), on: (key, fn) => listeners.set(key, fn) },
@@ -79,20 +85,79 @@ async function boot(options = {}) {
   };
   const mainPath = path.join(__dirname, '../src/main.cjs'); const realRequire = createRequire(mainPath);
   vm.runInNewContext(fs.readFileSync(mainPath, 'utf8'), {
-    require: (name) => name === 'electron' ? electron : name === './external-app.cjs' ? { resolveExternalApp: options.resolveExternalApp ?? (async () => ({ key: '1'.repeat(64), name: 'ブラウザ' })) } : realRequire(name), __dirname: path.dirname(mainPath),
-    process: { platform: 'win32', env: { DISCORDDECK_TEST: '1' } }, Buffer, URL, console, setTimeout, clearTimeout,
+    require: (name) => name === 'electron' ? electron : name === 'electron-updater' ? { autoUpdater } : name === './external-app.cjs' ? { resolveExternalApp: options.resolveExternalApp ?? (async () => ({ key: '1'.repeat(64), name: 'ブラウザ' })) } : realRequire(name), __dirname: path.dirname(mainPath),
+    process: { platform: 'win32', execPath: path.join(data, 'DiscordDeck.exe'), env: { DISCORDDECK_TEST: '1', ...options.env } }, Buffer, URL, console, setTimeout, clearTimeout, setImmediate,
   }, { filename: mainPath });
   await new Promise(setImmediate);
   const win = windows[0];
   assert.ok(win);
   const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
   return {
-    data, win, sessions, handlers, listeners, event, links, electron,
+    data, win, sessions, handlers, listeners, event, links, electron, autoUpdater,
     get: () => handlers.get('deck:get')(event),
     command: (value) => handlers.get('deck:command')(event, value),
     cleanup: () => { app.emit('before-quit', { preventDefault() {} }); win.emit('closed'); },
   };
 }
+
+test('更新は管理画面からだけ実行し、全列のCookie保存完了後にインストーラーを起動する', async () => {
+  const ctx = await boot({ installed: true });
+  try {
+    assert.equal(ctx.get().updates.enabled, true); assert.equal(ctx.autoUpdater.checks, undefined);
+    assert.equal((await ctx.command({ type: 'update-install' })).ok, false);
+    await ctx.command({ type: 'add', name: 'A' }); await ctx.command({ type: 'add', name: 'B' });
+    const [a, b] = ctx.win.contentView.children;
+    await assert.rejects(ctx.handlers.get('deck:command')({ sender: a.webContents, senderFrame: a.webContents.mainFrame }, { type: 'update-check' }));
+    await ctx.command({ type: 'update-check' }); assert.equal(ctx.get().updates.phase, 'available');
+    assert.equal(ctx.autoUpdater.downloads, undefined);
+    await ctx.command({ type: 'update-download' }); assert.equal(ctx.get().updates.phase, 'downloaded');
+    assert.equal(ctx.autoUpdater.installed, undefined);
+    let finish;
+    b.webContents.session.cookies.flushStore = () => new Promise((resolve) => { finish = resolve; });
+    await ctx.command({ type: 'update-install' }); await new Promise(setImmediate);
+    assert.equal(ctx.autoUpdater.installed, undefined); assert.equal(ctx.electron.app.quitCalls || 0, 0);
+    assert.equal(a.webContents.session.cookieFlushes, 1); assert.equal(b.webContents.session.storageFlushes, 1);
+    const saved = JSON.parse(fs.readFileSync(path.join(ctx.data, 'deck.json'), 'utf8'));
+    assert.equal(saved.accounts.length, 2); assert.equal(saved.updates, undefined);
+    finish(); await new Promise(setImmediate); assert.equal(ctx.autoUpdater.installed, true);
+    assert.equal(ctx.electron.app.quitCalls, 1);
+  } finally { ctx.cleanup(); }
+});
+
+test('更新前にセッション保存が失敗したら終了と更新を止め、アプリを使い続けられる', async () => {
+  const ctx = await boot({ installed: true });
+  try {
+    await ctx.command({ type: 'add', name: 'A' });
+    const ses = ctx.win.contentView.children[0].webContents.session;
+    ses.cookies.flushStore = async () => { throw new Error('test failure'); };
+    await ctx.command({ type: 'update-check' }); await ctx.command({ type: 'update-download' });
+    await ctx.command({ type: 'update-install' }); await new Promise(setImmediate);
+    assert.equal(ctx.get().updates.phase, 'error'); assert.equal(ctx.autoUpdater.installed, undefined);
+    assert.equal(ctx.electron.app.quitCalls || 0, 0);
+    assert.equal((await ctx.command({ type: 'add', name: 'B' })).ok, true);
+    ses.cookies.flushStore = async () => {};
+    const blockedTemp = path.join(ctx.data, 'deck.json.tmp');
+    fs.mkdirSync(blockedTemp);
+    try {
+      await ctx.command({ type: 'update-check' }); await ctx.command({ type: 'update-download' });
+      await ctx.command({ type: 'update-install' }); await new Promise(setImmediate);
+      assert.equal(ctx.get().updates.phase, 'error'); assert.match(ctx.get().updates.error, /設定を保存/);
+      assert.equal(ctx.autoUpdater.installed, undefined); assert.equal(ctx.electron.app.quitCalls || 0, 0);
+    } finally { fs.rmdirSync(blockedTemp); }
+  } finally { ctx.cleanup(); }
+});
+
+test('開発版とportable版では更新処理を起動しない', async () => {
+  for (const options of [{}, { installed: true, env: { PORTABLE_EXECUTABLE_FILE: 'portable.exe' } }]) {
+    const ctx = await boot(options);
+    try {
+      assert.equal(ctx.get().updates.enabled, false);
+      await ctx.command({ type: 'update-check' }); await ctx.command({ type: 'update-download' });
+      assert.equal((await ctx.command({ type: 'update-install' })).ok, false);
+      assert.equal(ctx.autoUpdater.checks, undefined); assert.equal(ctx.autoUpdater.downloads, undefined);
+    } finally { ctx.cleanup(); }
+  }
+});
 
 test('タスクバーで全アカウントの未読を集計し、タイトルとDOMを二重計上せず、既読で消す', async () => {
   const ctx = await boot();

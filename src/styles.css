@@ -87,6 +87,7 @@
 #settings-dialog{width:580px;max-height:90vh}
 #settings-dialog select{display:block;width:100%;margin:8px 0 16px;padding:11px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;text-overflow:ellipsis}
 #settings-dialog select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app-update{border-top:1px solid var(--border);margin-top:20px;padding-top:4px}.app-update .device-heading{margin-top:14px}.update-actions{display:flex;flex-wrap:wrap;gap:8px}.app-update progress{width:100%;height:6px;margin:0 0 12px;accent-color:var(--accent)}
 .privacy-screen{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--bg);text-align:center;padding:24px}
 .privacy-screen svg{width:38px;height:38px;fill:none;stroke:var(--accent);stroke-width:1.5}
 .privacy-screen h2{font-size:20px;margin:20px 0 8px}.privacy-screen p{color:var(--muted)}

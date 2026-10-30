@@ -5,6 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { resolveExternalApp } = require('./external-app.cjs');
 const { CredentialStore } = require('./credentials.cjs');
 const { summarizeUnread, renderBadge } = require('./taskbar.cjs');
+const { UpdateManager, RELEASES_URL } = require('./updates.cjs');
 const { HOME, COLORS, MODES, MAX_ACCOUNTS, isDiscordURL, channelURL, externalURL, label, createAccount, normalizeState, partitionFor, clampBounds, discordAvatarURL, customAvatar, unreadFromTitle, reorderAccounts, requestedMedia, mediaEnabled, displayText, normalizeNavigation, normalizeColor, appSettings, audioDevice, stableUserAgent } = require('./model.cjs');
 
 app.setName('DiscordDeck');
@@ -34,6 +35,7 @@ const pendingNavigation = new Map();
 let navigationSerial = 0;
 let win;
 let state;
+let updates;
 let saveTimer;
 let startupWarning;
 let modalOpen = false;
@@ -111,7 +113,7 @@ function updateTaskbarBadge(force = false) {
   }
 }
 function snapshot() {
-  return { ...state, privacyHidden: privacyHidden(), accounts: state.accounts.map((a) => ({ ...a, ...metadata.get(a.id), ...unreadFor(a.id), ...credentials.status(a.id), status: statuses.get(a.id) ?? 'loading' })), maxAccounts: MAX_ACCOUNTS, colors: COLORS };
+  return { ...state, updates: updates?.snapshot(), privacyHidden: privacyHidden(), accounts: state.accounts.map((a) => ({ ...a, ...metadata.get(a.id), ...unreadFor(a.id), ...credentials.status(a.id), status: statuses.get(a.id) ?? 'loading' })), maxAccounts: MAX_ACCOUNTS, colors: COLORS };
 }
 function emit() { if (win && !win.isDestroyed()) { updateTaskbarBadge(); win.webContents.send('deck:state', snapshot()); } }
 function notify(message) { if (win && !win.isDestroyed()) win.webContents.send('deck:notice', message); }
@@ -313,20 +315,29 @@ function scheduleStorageFlush(ses) {
   }, 2000));
 }
 
-function shutdown() {
+function shutdown(afterFlush) {
   if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
   clearTimeout(saveTimer);
   for (const timer of storageTimers.values()) clearTimeout(timer);
   storageTimers.clear();
   hideViews();
-  if (state) { try { save(); } catch { /* Do not block shutdown on a settings write error. */ } }
+  let settingsFailed = false;
+  if (state) { try { save(); } catch { settingsFailed = true; } }
   const sessions = [...new Set([...views.values()].map((view) => view.webContents.session))];
   shutdownPromise = Promise.allSettled(sessions.map(flushSession)).then((results) => {
     // Flush Chromium storage without reading cookie or token values.
-    if (results.some((result) => result.status === 'rejected')) console.warn('DiscordDeck: session persistence failed during shutdown.');
+    if (results.some((result) => result.status === 'rejected')) {
+      console.warn('DiscordDeck: session persistence failed during shutdown.');
+      if (afterFlush) settingsFailed = true;
+    }
+    if (afterFlush && settingsFailed) throw Object.assign(new Error('更新前の保存に失敗しました。'), { code: 'DECK_UPDATE_SAVE_FAILED' });
     shutdownComplete = true;
-    app.quit();
+    if (afterFlush) afterFlush(); else app.quit();
+  }).catch((error) => {
+    shuttingDown = false; shutdownComplete = false; shutdownPromise = undefined;
+    emit(); if (win && !win.isDestroyed()) win.webContents.send('deck:layout');
+    throw error;
   });
   return shutdownPromise;
 }
@@ -408,6 +419,13 @@ function registerIPC() {
     try {
       if (!command || typeof command !== 'object') throw new Error('無効な操作です。');
       switch (command.type) {
+        case 'update-check': void updates.check(); return { ok: true, state: snapshot() };
+        case 'update-download': void updates.download(); return { ok: true, state: snapshot() };
+        case 'update-install':
+          updates.beginInstall();
+          setImmediate(() => { void shutdown(() => updates.quitAndInstall()).catch((error) => updates.fail(error)); });
+          return { ok: true, state: snapshot() };
+        case 'update-releases': await openExternal(RELEASES_URL); return { ok: true, state: snapshot() };
         case 'credentials-save': {
           const entry = account(command.id);
           await credentials.save(entry.id, command);
@@ -640,7 +658,10 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } });
   app.whenReady().then(async () => {
-    state = readState(); Menu.setApplicationMenu(null); registerIPC(); await createWindow();
+    state = readState();
+    const installed = process.platform === 'win32' && app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE && fs.existsSync(path.join(path.dirname(process.execPath), 'Uninstall DiscordDeck.exe'));
+    updates = new UpdateManager({ updater: installed ? require('electron-updater').autoUpdater : null, version: app.getVersion(), unavailable: app.isPackaged ? 'アプリ内更新はインストーラー版で使えます。配布ページからSetup.exeを入れてください。' : '開発版ではアプリ内更新を実行しません。', onChange: emit });
+    Menu.setApplicationMenu(null); registerIPC(); await createWindow();
   }).catch((error) => { dialog.showErrorBox('DiscordDeckを起動できません', error.message); app.quit(); });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', (event) => {

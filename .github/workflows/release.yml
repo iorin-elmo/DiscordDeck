@@ -1,0 +1,53 @@
+name: Windows版のリリース
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: タグとバージョンの一致を確認
+        run: node -e "if (process.env.GITHUB_REF_NAME !== 'v' + require('./package.json').version) throw new Error('Tag and package version must match')"
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: Windows配布ファイルと更新情報を作成
+        run: npm run dist:win -- --config.directories.output=dist/release
+      - name: 全ファイルを揃えてからリリースを公開
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $releaseAssets = @(
+            "dist/release/DiscordDeck-$releaseVersion-Setup.exe",
+            "dist/release/DiscordDeck-$releaseVersion-Setup.exe.blockmap",
+            "dist/release/DiscordDeck-$releaseVersion-portable.exe",
+            'dist/release/latest.yml'
+          )
+          foreach ($assetPath in $releaseAssets) {
+            if (!(Test-Path -LiteralPath $assetPath)) { throw "Missing release asset: $assetPath" }
+          }
+          gh release create $env:GITHUB_REF_NAME --verify-tag --draft --title "DiscordDeck $releaseVersion" --notes-file RELEASE_NOTES.md @releaseAssets
+          if ($LASTEXITCODE -ne 0) { throw 'Release creation failed; existing releases are not overwritten.' }
+          gh release edit $env:GITHUB_REF_NAME --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed; the draft can be reviewed on GitHub.' }
