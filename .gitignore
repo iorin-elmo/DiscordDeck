@@ -5,3 +5,4 @@ playwright-report/
 artifacts/
 *.log
 login-credentials.json*
+session-cookies.json*

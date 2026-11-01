@@ -14,6 +14,7 @@ async function boot(options = {}) {
   const data = options.data || fs.mkdtempSync(path.join(os.tmpdir(), 'discorddeck-main-'));
   if (options.initialState) fs.writeFileSync(path.join(data, 'deck.json'), JSON.stringify(options.initialState), 'utf8');
   const handlers = new Map(); const listeners = new Map(); const sessions = new Map(); const windows = []; const links = [];
+  const intervals = new Map();
   class Contents extends EventEmitter {
     constructor(preferences = {}) { super(); this.preferences = preferences; this.session = preferences.session ?? getSession('shell'); this.mainFrame = { url: '' }; this.destroyed = false; }
     setZoomFactor(value) { this.zoom = value; }
@@ -31,6 +32,13 @@ async function boot(options = {}) {
     if (sessions.has(key)) return sessions.get(key);
     const ses = new EventEmitter();
     ses.cookies = new EventEmitter();
+    ses.cookies.items = [];
+    ses.cookies.get = async () => ses.cookies.items;
+    ses.cookies.set = async (value) => {
+      const cookie = { ...value, domain: value.domain || new URL(value.url).hostname, hostOnly: !value.domain, session: !value.expirationDate };
+      ses.cookies.items = [...ses.cookies.items.filter((entry) => entry.name !== cookie.name || entry.path !== cookie.path), cookie];
+      ses.cookies.emit('changed', {}, cookie, 'explicit', false);
+    };
     ses.cookies.flushStore = async () => { ses.cookieFlushes = (ses.cookieFlushes || 0) + 1; };
     Object.assign(ses, {
       flushStorageData() { this.storageFlushes = (this.storageFlushes || 0) + 1; },
@@ -87,18 +95,65 @@ async function boot(options = {}) {
   vm.runInNewContext(fs.readFileSync(mainPath, 'utf8'), {
     require: (name) => name === 'electron' ? electron : name === 'electron-updater' ? { autoUpdater } : name === './external-app.cjs' ? { resolveExternalApp: options.resolveExternalApp ?? (async () => ({ key: '1'.repeat(64), name: 'ブラウザ' })) } : realRequire(name), __dirname: path.dirname(mainPath),
     process: { platform: 'win32', execPath: path.join(data, 'DiscordDeck.exe'), env: { DISCORDDECK_TEST: '1', ...options.env } }, Buffer, URL, console, setTimeout, clearTimeout, setImmediate,
+    setInterval: (fn, delay) => { const token = { unref() {} }; intervals.set(token, { fn, delay }); return token; }, clearInterval: (token) => intervals.delete(token),
   }, { filename: mainPath });
   await new Promise(setImmediate);
   const win = windows[0];
   assert.ok(win);
   const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
   return {
-    data, win, sessions, handlers, listeners, event, links, electron, autoUpdater,
+    data, win, sessions, handlers, listeners, event, links, electron, autoUpdater, intervals,
     get: () => handlers.get('deck:get')(event),
     command: (value) => handlers.get('deck:command')(event, value),
     cleanup: () => { app.emit('before-quit', { preventDefault() {} }); win.emit('closed'); },
   };
 }
+
+test('Windows終了通知と定期保存で暗号化Cookieを保存し、通常終了を通らなくても次回起動前に復元する', async () => {
+  const first = await boot(); let second;
+  try {
+    await first.command({ type: 'add', name: 'A' });
+    const id = first.get().accounts[0].id, ses = first.win.contentView.children[0].webContents.session;
+    const fixture = { name: 'deck-session-fixture', value: 'fixture-secret-cookie', domain: '.discord.com', path: '/', secure: true, httpOnly: true, hostOnly: false, sameSite: 'lax', session: true };
+    ses.cookies.items = [fixture]; ses.cookies.emit('changed', {}, fixture, 'explicit', false);
+    const timer = [...first.intervals.values()].find((entry) => entry.delay === 15_000);
+    assert.ok(timer); timer.fn(); await new Promise(setImmediate);
+    const filename = path.join(first.data, 'session-cookies.json');
+    assert.equal(fs.readFileSync(filename, 'utf8').includes('fixture-secret-cookie'), false);
+    first.win.emit('query-session-end', { preventDefault() { throw Error('Must not cancel Windows restart'); } });
+    await new Promise(setImmediate);
+    assert.equal(first.electron.app.quitCalls || 0, 0);
+    first.win.emit('closed'); assert.equal(first.intervals.size, 0);
+    second = await boot({ data: first.data });
+    const restored = second.win.contentView.children[0].webContents.session;
+    assert.equal(second.get().accounts[0].id, id);
+    assert.equal(restored.cookies.items[0].value, 'fixture-secret-cookie');
+    await second.command({ type: 'credentials-delete', id });
+    assert.ok(JSON.parse(fs.readFileSync(filename, 'utf8')).entries[id]);
+    await second.command({ type: 'remove', id });
+    assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).entries[id], undefined);
+  } finally { first.cleanup(); second?.cleanup(); }
+});
+
+test('LocalStorageの変更通知は対象のDiscordメインフレームだけ受け付け、連続通知でも保存を先送りしない', async () => {
+  const ctx = await boot();
+  try {
+    await ctx.command({ type: 'add', name: 'A' });
+    const wc = ctx.win.contentView.children[0].webContents, ses = wc.session;
+    wc.mainFrame.url = 'https://discord.com/channels/@me';
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    const before = ses.storageFlushes;
+    ctx.listeners.get('discord:storage-dirty')({ sender: wc, senderFrame: { url: wc.mainFrame.url } });
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    assert.equal(ses.storageFlushes, before);
+    const event = { sender: wc, senderFrame: wc.mainFrame };
+    ctx.listeners.get('discord:storage-dirty')(event);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    ctx.listeners.get('discord:storage-dirty')(event);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.equal(ses.storageFlushes, before + 1);
+  } finally { ctx.cleanup(); }
+});
 
 test('更新は管理画面からだけ実行し、全列のCookie保存完了後にインストーラーを起動する', async () => {
   const ctx = await boot({ installed: true });

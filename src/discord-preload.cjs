@@ -220,7 +220,33 @@ function installMediaPolicy(initial) {
   } } });
 }
 
+function installStorageCheckpoints() {
+  const key = Symbol.for('discorddeck.storage-checkpoints');
+  if (window[key]) return;
+  Object.defineProperty(window, key, { value: true });
+  // Report only that storage changed. Names, values and tokens stay inside the browser.
+  let pending = false;
+  const signal = () => window.dispatchEvent(new Event('discorddeck:storage-dirty'));
+  const schedule = () => {
+    if (!pending) { pending = true; setTimeout(() => { pending = false; signal(); }, 200); }
+  };
+  const prototype = window.Storage?.prototype;
+  if (prototype) for (const name of ['setItem', 'removeItem', 'clear']) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+    if (typeof descriptor?.value !== 'function') continue;
+    const original = descriptor.value;
+    Object.defineProperty(prototype, name, { ...descriptor, value: function (...args) {
+      const result = Reflect.apply(original, this, args); schedule(); return result;
+    } });
+  }
+  window.addEventListener('storage', schedule);
+  window.addEventListener('pagehide', signal);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) signal(); });
+}
+
 if (window.top === window && location.origin === 'https://discord.com') {
+  window.addEventListener('discorddeck:storage-dirty', () => ipcRenderer.send('discord:storage-dirty'));
+  try { contextBridge?.executeInMainWorld?.({ func: installStorageCheckpoints, args: [] }); } catch { /* Periodic native checkpoints remain active. */ }
   let policyWarning = false;
   let passkeyWarning = false;
   const applyMedia = (value) => {

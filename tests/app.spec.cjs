@@ -2,6 +2,7 @@ const { test, expect, _electron: electron } = require('@playwright/test');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const http = require('node:http');
 
 const root = path.join(__dirname, '..');
 async function launch(data) {
@@ -30,6 +31,65 @@ async function capture(app, name) {
   const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
   await fs.writeFile(path.join(root, 'artifacts', name), Buffer.from(png, 'base64'));
 }
+
+test('セッションCookie・LocalStorage・IndexedDBを同じ列の次回起動へ引き継ぐ', async () => {
+  test.setTimeout(120_000);
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'discorddeck-storage-e2e-'));
+  const server = http.createServer((_req, res) => res.end('<!doctype html><title>Storage fixture</title><p>Offline fixture</p>'));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  let app;
+  try {
+    let launched = await launch(data); app = launched.app;
+    await add(launched.page, '保存テスト');
+    await app.evaluate(async ({ BrowserWindow }, origin) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      const wc = win.contentView.children.find((view) => view.webContents && view.webContents !== win.webContents).webContents;
+      await wc.loadURL(origin);
+      await wc.session.cookies.set({ url: 'https://discord.com', name: 'deck-session-fixture', value: 'offline-session-value', secure: true, httpOnly: true, sameSite: 'lax' });
+      await wc.executeJavaScript(`(async () => {
+        localStorage.setItem('deck-storage-fixture', 'offline-local-value');
+        await new Promise((resolve, reject) => {
+          const request = indexedDB.open('deck-storage-fixture', 1);
+          request.onupgradeneeded = () => request.result.createObjectStore('entries');
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const db = request.result, transaction = db.transaction('entries', 'readwrite');
+            transaction.objectStore('entries').put('offline-db-value', 'fixture');
+            transaction.oncomplete = () => { db.close(); resolve(); };
+            transaction.onerror = () => reject(transaction.error);
+          };
+        });
+      })()`);
+    }, origin);
+    await app.close(); app = null;
+    const saved = await fs.readFile(path.join(data, 'session-cookies.json'), 'utf8');
+    expect(saved).not.toContain('offline-session-value');
+    launched = await launch(data); app = launched.app;
+    const values = await app.evaluate(async ({ BrowserWindow }, origin) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      const wc = win.contentView.children.find((view) => view.webContents && view.webContents !== win.webContents).webContents;
+      await wc.loadURL(origin);
+      const cookies = await wc.session.cookies.get({ name: 'deck-session-fixture' });
+      const storage = await wc.executeJavaScript(`(async () => ({
+        local: localStorage.getItem('deck-storage-fixture'),
+        db: await new Promise((resolve, reject) => {
+          const request = indexedDB.open('deck-storage-fixture', 1);
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains('entries')) { db.close(); resolve(null); return; }
+            const read = db.transaction('entries').objectStore('entries').get('fixture');
+            read.onsuccess = () => { db.close(); resolve(read.result); };
+            read.onerror = () => reject(read.error);
+          };
+        })
+      }))()`);
+      return { cookies: cookies.map((cookie) => cookie.value), ...storage };
+    }, origin);
+    expect(values).toEqual({ cookies: ['offline-session-value'], local: 'offline-local-value', db: 'offline-db-value' });
+  } finally { if (app) await app.close(); await new Promise((resolve) => server.close(resolve)); }
+});
 
 test('列の操作、ネイティブ描画、セッションの分離と再起動後の保持', async () => {
   test.setTimeout(120_000);

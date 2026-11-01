@@ -4,6 +4,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { resolveExternalApp } = require('./external-app.cjs');
 const { CredentialStore } = require('./credentials.cjs');
+const { SessionCookieStore } = require('./session-cookies.cjs');
 const { summarizeUnread, renderBadge } = require('./taskbar.cjs');
 const { UpdateManager, RELEASES_URL } = require('./updates.cjs');
 const { HOME, COLORS, MODES, MAX_ACCOUNTS, isDiscordURL, channelURL, externalURL, label, createAccount, normalizeState, partitionFor, clampBounds, discordAvatarURL, customAvatar, unreadFromTitle, reorderAccounts, requestedMedia, mediaEnabled, displayText, normalizeNavigation, normalizeColor, appSettings, audioDevice, stableUserAgent } = require('./model.cjs');
@@ -19,6 +20,7 @@ app.setPath('sessionData', dataDirectory);
 app.userAgentFallback = stableUserAgent(app.userAgentFallback);
 const configPath = path.join(app.getPath('userData'), 'deck.json');
 const credentials = new CredentialStore(path.join(dataDirectory, 'login-credentials.json'), safeStorage);
+const sessionCookies = new SessionCookieStore(path.join(dataDirectory, 'session-cookies.json'), safeStorage);
 const shellPath = path.join(__dirname, 'index.html');
 const shellURL = pathToFileURL(shellPath).href;
 const discordCompactCSS = fs.readFileSync(path.join(__dirname, 'discord-compact.css'), 'utf8');
@@ -45,6 +47,10 @@ let shuttingDown = false;
 let shutdownComplete = false;
 let shutdownPromise;
 const storageTimers = new Map();
+const storageFlushes = new Map();
+const restoringSessions = new Map();
+let storageInterval;
+let storageWarning = false;
 let scanDeadline = 0;
 let scanGranted = false;
 
@@ -186,8 +192,13 @@ async function openExternal(url) {
 }
 
 function configureSession(ses, id) {
-  // Cookie values remain inside Chromium; the event only schedules a disk flush.
-  ses.cookies.on('changed', () => scheduleStorageFlush(ses));
+  ses.cookies.on('changed', (_event, cookie) => {
+    if (!views.has(id)) return;
+    if (cookie && ['discord.com', '.discord.com'].includes(cookie.domain) && !restoringSessions.has(ses)) {
+      try { sessionCookies.invalidate(id); } catch { warnStorage(); }
+    }
+    scheduleStorageFlush(ses);
+  });
   const owned = (contents, origin) => contents === views.get(id)?.webContents && isDiscordURL(origin) && isDiscordURL(contents?.getURL());
   ses.setPermissionCheckHandler((contents, permission, origin, details = {}) => {
     const entry = state.accounts.find((a) => a.id === id);
@@ -294,30 +305,62 @@ function createView(entry) {
       event.preventDefault(); wc.reload();
     }
   });
-  if (testing && process.env.DISCORDDECK_LIVE !== '1') void wc.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent('<html lang="ja"><body style="background:#313338;color:#eee;font-family:sans-serif"><h1>独立セッションのテスト</h1><p>ここにDiscord公式Web版が表示されます。</p><input aria-label="セッション確認"></body></html>')}`).catch(() => status(entry.id, 'error'));
-  else void wc.loadURL(entry.url).catch(() => status(entry.id, 'error'));
+  const ready = sessionCookies.restore(entry.id, ses, () => views.get(entry.id) === view && !wc.isDestroyed()).catch(() => {
+    notify('一部のCookieを復元できませんでした。Discordからログアウトしている場合は再ログインしてください。');
+  });
+  restoringSessions.set(ses, ready);
+  void ready.then(() => {
+    if (restoringSessions.get(ses) === ready) restoringSessions.delete(ses);
+    if (shuttingDown || views.get(entry.id) !== view || wc.isDestroyed()) return;
+    if (testing && process.env.DISCORDDECK_LIVE !== '1') return wc.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent('<html lang="ja"><body style="background:#313338;color:#eee;font-family:sans-serif"><h1>独立セッションのテスト</h1><p>ここにDiscord公式Web版が表示されます。</p><input aria-label="セッション確認"></body></html>')}`);
+    return wc.loadURL(entry.url);
+  }).catch(() => status(entry.id, 'error'));
   return view;
 }
 
 function hideViews() { for (const view of views.values()) view.setVisible(false); }
 
-async function flushSession(ses) {
-  ses.flushStorageData();
-  await ses.cookies.flushStore();
+function warnStorage() {
+  if (!storageWarning) { storageWarning = true; notify('ログイン状態を保存できませんでした。保存先の空き容量と書き込み権限を確認してください。'); }
+}
+function flushSession(ses) {
+  const run = async () => {
+    ses.flushStorageData();
+    await ses.cookies.flushStore();
+    if (restoringSessions.has(ses)) await restoringSessions.get(ses);
+    const id = [...views].find(([, view]) => view.webContents.session === ses)?.[0];
+    if (id) await sessionCookies.capture(id, ses);
+  };
+  const previous = storageFlushes.get(ses);
+  const work = previous ? previous.catch(() => {}).then(run) : run();
+  storageFlushes.set(ses, work);
+  const cleanup = () => { if (storageFlushes.get(ses) === work) storageFlushes.delete(ses); };
+  void work.then(cleanup, cleanup);
+  return work;
+}
+function checkpointSessions() {
+  if (shuttingDown) return;
+  const sessions = [...new Set([...views.values()].map((view) => view.webContents.session))];
+  void Promise.allSettled(sessions.map(flushSession)).then((results) => { if (results.some((result) => result.status === 'rejected')) warnStorage(); });
+}
+function checkpointBeforeSystemEnd() {
+  // Windows may terminate the process without close/before-quit. Do not block the user's restart.
+  try { if (state) save(); } catch { warnStorage(); }
+  checkpointSessions();
 }
 
 function scheduleStorageFlush(ses) {
-  if (shuttingDown) return;
-  clearTimeout(storageTimers.get(ses));
+  if (shuttingDown || storageTimers.has(ses)) return;
   storageTimers.set(ses, setTimeout(() => {
     storageTimers.delete(ses);
-    void flushSession(ses).catch(() => notify('ログイン状態を保存できませんでした。保存先の空き容量と権限を確認してください。'));
+    void flushSession(ses).catch(warnStorage);
   }, 2000));
 }
 
 function shutdown(afterFlush) {
   if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
+  clearInterval(storageInterval);
   clearTimeout(saveTimer);
   for (const timer of storageTimers.values()) clearTimeout(timer);
   storageTimers.clear();
@@ -336,6 +379,7 @@ function shutdown(afterFlush) {
     if (afterFlush) afterFlush(); else app.quit();
   }).catch((error) => {
     shuttingDown = false; shutdownComplete = false; shutdownPromise = undefined;
+    startStorageCheckpoints();
     emit(); if (win && !win.isDestroyed()) win.webContents.send('deck:layout');
     throw error;
   });
@@ -343,6 +387,9 @@ function shutdown(afterFlush) {
 }
 
 function registerIPC() {
+  ipcMain.on('discord:storage-dirty', (event) => {
+    if (remoteEntry(event)) scheduleStorageFlush(event.sender.session);
+  });
   ipcMain.on('discord:passkey-policy-error', (event) => {
     if (remoteEntry(event)) notify('パスキーの自動表示を抑制できませんでした。列を再読み込みしてください。');
   });
@@ -520,9 +567,11 @@ function registerIPC() {
         case 'remove': {
           const entry = account(command.id);
           credentials.remove(entry.id);
+          sessionCookies.invalidate(entry.id);
           const view = views.get(entry.id);
           view.setVisible(false);
           const ses = view.webContents.session;
+          clearTimeout(storageTimers.get(ses)); storageTimers.delete(ses);
           win.contentView.removeChildView(view);
           view.webContents.close();
           views.delete(entry.id); statuses.delete(entry.id);
@@ -534,6 +583,8 @@ function registerIPC() {
           save();
           emit();
           try {
+            if (restoringSessions.has(ses)) await restoringSessions.get(ses);
+            if (storageFlushes.has(ses)) await storageFlushes.get(ses).catch(() => {});
             await ses.closeAllConnections();
             await ses.clearStorageData();
             await ses.clearCache();
@@ -638,20 +689,31 @@ async function createWindow() {
   win.on('leave-full-screen', syncFullscreen);
   win.on('minimize', hideViews);
   win.on('restore', () => { win.webContents.send('deck:layout'); updateTaskbarBadge(true); });
+  win.on('query-session-end', checkpointBeforeSystemEnd);
+  win.on('session-end', checkpointBeforeSystemEnd);
   win.on('close', (event) => {
     if (shutdownComplete) return;
     event.preventDefault();
     void shutdown();
   });
   win.on('closed', () => {
+    clearInterval(storageInterval);
     for (const view of views.values()) { if (!view.webContents.isDestroyed()) view.webContents.close(); }
     views.clear(); win = null;
   });
   for (const entry of state.accounts) createView(entry);
   await win.loadFile(shellPath);
   win.show();
+  startStorageCheckpoints();
   updateTaskbarBadge(true);
   if (startupWarning) notify(startupWarning);
+  if (sessionCookies.recovered) notify('Cookieの補助保存ファイルを読み込めなかったため、元ファイルを保管して再作成します。既存のブラウザ保存データはそのまま使用します。');
+}
+
+function startStorageCheckpoints() {
+  clearInterval(storageInterval);
+  storageInterval = setInterval(checkpointSessions, 15_000);
+  storageInterval.unref?.();
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();

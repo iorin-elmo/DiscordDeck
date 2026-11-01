@@ -1,6 +1,20 @@
 # 検証結果
 
-検証日：2026年10月30日。Windows x64、Node.js v24.12.0、Electron 45.1.0。
+検証日：2026年11月2日。Windows x64、Node.js v24.12.0、Electron 45.1.0。
+
+## 0.10.1の確認
+
+構文チェック、単体テスト65件、Chromeのブラウザテスト36件が成功しました。対象PCのデータ領域にCookieとLocalStorageの保存ファイルが存在することを、内容を表示せず確認しました。実アカウントのCookie値・LocalStorage値・保存パスワードは調査で読み出していません。使用中のDiscordDeckを終了したり、ログインデータを変更したりする操作も行っていません。今回の原因を特定できたわけではありません。
+
+保存先と永続partitionは従来のままです。LocalStorage・SessionStorageの変更から約2秒後と15秒ごとの定期保存、Windowsのquery-session-end/session-end通知時に標準のflushStorageDataとcookies.flushStoreを呼ぶ処理を追加しました。通知が続いても保存を先延ばしにせず、同じセッションへの保存は順番に処理します。OS終了通知はpreventDefaultしません。
+
+Electron 45.1.0の[NetworkContextService](https://github.com/electron/electron/blob/v45.1.0/shell/browser/net/network_context_service.cc)ではセッションCookieの永続化・復元が無効であることを確認しました。未対応の起動スイッチを足す方法は使わず、DiscordドメインのセッションCookieだけをsafeStorageで暗号化して補助保存し、ページ読み込み前に復元します。期限付きCookieはChromiumの管理のままです。補助ファイルはfsync後に置き換え、ログアウト・列削除では前の記録を直ちに無効化します。
+
+暗号化・復号は単体テストではAES-GCMの代替を使い、再起動相当の再読込、属性の維持、現在のCookieを上書きしないこと、別アカウントへの持ち出しや暗号文の改変の拒否、暗号化不可時に平文保存しないことを確認しました。保存中に列を削除した場合やCookieが削除された場合にも、古い記録を書き戻しません。破損した補助ファイルは元を保管し、Chromium本体の保存データを削除せずに再作成します。
+
+実際のメイン処理をElectron API代替で実行し、通常終了を通さずWindows終了通知と定期保存だけを行った後でも、次回起動のページ読み込み前にCookieを復元することを確認しました。自動入力用パスワードの削除はCookieの削除と連動させず、列を削除した場合はCookieの補助保存も削除します。保存変更通知は対象Discordメインフレームからだけ受け付けます。
+
+Chromeで実際のpreloadを実行し、標準のStorage APIの結果と例外を保ち、通知にキー名・値を含めないこと、他ドメインでは監視せず、pagehideで直ちに通知することを確認しました。ネイティブElectron向けにはCookie・LocalStorage・IndexedDBの再起動後の引き継ぎテストを追加し、テストの構文と検出まで確認しています。既存のDevice Guard制限のため実行はしていません。実際のPC再起動と実アカウントでのログイン維持は未検証です。
 
 ## 0.10.0の確認
 
