@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
+const { pathToFileURL } = require('node:url');
 
 const root = path.join(__dirname, '..');
 async function launch(data) {
@@ -11,7 +12,10 @@ async function launch(data) {
   const app = await electron.launch({ executablePath: require('electron'), args: [root], env });
   const messages = [];
   app.process().stderr?.on('data', (chunk) => { messages.push(chunk.toString().slice(0, 2000)); });
-  const page = await app.firstWindow();
+  await app.firstWindow();
+  const shellURL = pathToFileURL(path.join(root, 'src/index.html')).href;
+  await expect.poll(() => app.windows().some((window) => window.url() === shellURL)).toBe(true);
+  const page = app.windows().find((window) => window.url() === shellURL);
   page.on('pageerror', (error) => messages.push(error.message));
   try { await page.waitForSelector('[data-layout][aria-pressed]'); }
   catch (error) {
@@ -95,6 +99,35 @@ test('セッションCookie・LocalStorage・IndexedDBを同じ列の次回起�
       return { cookies: cookies.map((cookie) => cookie.value), ...storage };
     }, origin);
     expect(values).toEqual({ cookies: ['offline-session-value'], local: 'offline-local-value', db: 'offline-db-value' });
+  } finally { if (app) await app.close(); await new Promise((resolve) => server.close(resolve)); }
+});
+
+test('終了ハンドラーが書き戻すブラウザ保存データを次回起動へ引き継ぐ', async () => {
+  test.setTimeout(120_000);
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'discorddeck-unload-e2e-'));
+  const server = http.createServer((_req, res) => res.end('<!doctype html><title>Unload fixture</title>'));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`; let app;
+  const storagePage = async (app) => app.evaluate(async ({ BrowserWindow }, origin) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    const wc = win.contentView.children.find((view) => view.webContents && view.webContents !== win.webContents).webContents;
+    await wc.loadURL(origin); return wc.id;
+  }, origin);
+  try {
+    let launched = await launch(data); app = launched.app;
+    await add(launched.page, '終了テスト');
+    const id = await storagePage(app);
+    await app.evaluate(async ({ webContents }, id) => webContents.fromId(id).executeJavaScript(`(() => {
+      localStorage.removeItem('deck-write-on-exit');
+      window.addEventListener('beforeunload', (event) => {
+        if (event.isTrusted) localStorage.setItem('deck-write-on-exit', 'saved-by-trusted-unload');
+      });
+    })()`), id);
+    await app.close(); app = null;
+    launched = await launch(data); app = launched.app;
+    const restoredId = await storagePage(app);
+    const value = await app.evaluate(async ({ webContents }, id) => webContents.fromId(id).executeJavaScript("localStorage.getItem('deck-write-on-exit')"), restoredId);
+    expect(value).toBe('saved-by-trusted-unload');
   } finally { if (app) await app.close(); await new Promise((resolve) => server.close(resolve)); }
 });
 

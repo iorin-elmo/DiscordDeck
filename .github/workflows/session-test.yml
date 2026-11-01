@@ -20,7 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: 実際のElectronで保存・終了・再起動を確認
-        run: npm run test:e2e -- --grep "セッションCookie・LocalStorage・IndexedDB"
+        run: npm run test:e2e -- --grep "セッションCookie・LocalStorage・IndexedDB|終了ハンドラー"
       - name: 失敗時のテスト画面を表示
         if: failure()
         shell: pwsh
