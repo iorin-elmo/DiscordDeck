@@ -2,6 +2,20 @@
 
 検証日：2026年11月2日。Windows x64、Node.js v24.12.0、Electron 45.1.0。
 
+## 0.10.2の確認
+
+0.10.1でも変わらないとの報告を受け、インストール版が0.10.1に更新済みであることを確認しました。Cookieの補助保存には3列分の記録があり、LocalStorageファイルも存在しました。値を表示・復号せずLevelDBの更新メタデータだけを確認すると、3列とも認証用の保存キーは削除済みで、他の設定データは残っていました。保存領域全体が消えている状況とは異なります。
+
+匿名の新規Chromeで[Discord公式の公開JavaScript](https://discord.com/assets/web.f86c748842ee176f.js)を調べ、外寸と表示領域の差から開発者ツールを検出し、その間は認証キーを保存領域から除外し、信頼されたbeforeunloadで書き戻す経路を確認しました。DiscordDeckは保存してからWebContentsを破棄していたため、この書き戻しを通していませんでした。認証値そのものやDiscord内部ストアを実アカウントから取得する調査は行っていません。
+
+別のWindows環境で実際のElectronを使い、通常のLocalStorage・IndexedDB・セッションCookieは引き継げる一方、信頼された終了イベントで保存するデータは次回起動でnullになることを再現しました。[修正前の再現テスト](https://github.com/iorin-elmo/DiscordDeck/actions/runs/41327751238)ではこのケースだけ失敗します。
+
+0.10.2は、カラムをabout:blankへ正常に遷移させ、beforeunload/unloadの実行後にストレージとCookieを保存します。合成イベントの送信や認証値の抽出で代用しません。終了待ちは最大5秒とし、更新を中止する場合は空白にしたDiscord画面を読み直します。[Electronの終了API](https://www.electronjs.org/docs/latest/api/web-contents#contentscloseoptions)の既定値ではbeforeunloadを待たないことも確認しています。
+
+同じ実機テストで、元のカラムは外幅1024・内幅558を返していました。これを外幅558・内幅558へ補正し、ウィンドウ全体の寸法をカラムへ流用することによる誤認を防ぎます。高さも表示領域に合わせ、実際の開発者ツールが開いている場合は元の外寸を使います。この修正はDiscordメインフレームにだけ適用し、アプリのウィンドウ自体のサイズは変更しません。
+
+構文チェック、単体テスト69件、Chromeの画面テスト37件に成功しました。[修正後のWindowsネイティブテスト](https://github.com/iorin-elmo/DiscordDeck/actions/runs/41328415393)では、Cookie・LocalStorage・IndexedDBの引き継ぎ、終了時の書き戻し、カラムの寸法の3件すべてが成功しました。利用者のPCでのElectron実行制限を変更せず、GitHubのWindowsランナーで一時プロファイルとオフラインの試験用画面を使っています。実アカウントでの認証維持とPC自体の再起動は未検証です。
+
 ## 0.10.1の確認
 
 構文チェック、単体テスト65件、Chromeのブラウザテスト36件が成功しました。対象PCのデータ領域にCookieとLocalStorageの保存ファイルが存在することを、内容を表示せず確認しました。実アカウントのCookie値・LocalStorage値・保存パスワードは調査で読み出していません。使用中のDiscordDeckを終了したり、ログインデータを変更したりする操作も行っていません。今回の原因を特定できたわけではありません。

@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - name: 実際のElectronで再起動時の保存を確認
+        run: npm run test:e2e -- --grep "セッションCookie・LocalStorage・IndexedDB|終了ハンドラー|カラムの外寸"
       - name: Windows配布ファイルと更新情報を作成
         run: npm run dist:win -- --config.directories.output=dist/release
       - name: 全ファイルを揃えてからリリースを公開
