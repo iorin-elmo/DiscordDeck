@@ -1,0 +1,23 @@
+name: Windowsのセッション保持テスト
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  session:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: 実際のElectronで保存・終了・再起動を確認
+        run: npm run test:e2e -- --grep "セッションCookie・LocalStorage・IndexedDB"
