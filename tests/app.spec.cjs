@@ -9,8 +9,15 @@ async function launch(data) {
   const env = { ...process.env, DISCORDDECK_TEST: '1', DISCORDDECK_TEST_DATA: data };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({ executablePath: require('electron'), args: [root], env });
+  const messages = [];
+  app.process().stderr?.on('data', (chunk) => { messages.push(chunk.toString().slice(0, 2000)); });
   const page = await app.firstWindow();
-  await page.waitForSelector('[data-layout][aria-pressed]');
+  page.on('pageerror', (error) => messages.push(error.message));
+  try { await page.waitForSelector('[data-layout][aria-pressed]'); }
+  catch (error) {
+    console.log('Native startup diagnostic:', JSON.stringify({ url: page.url(), messages, dom: await page.evaluate(() => ({ title: document.title, controls: document.querySelectorAll('[data-layout]').length, text: document.body.innerText.slice(0, 1600) })).catch(() => null) }));
+    await app.close(); throw error;
+  }
   return { app, page };
 }
 async function add(page, name) {
