@@ -27,6 +27,7 @@ async function boot(options = {}) {
     reload() { this.reloaded = true; }
     close() { this.destroyed = true; }
     isDestroyed() { return this.destroyed; }
+    isDevToolsOpened() { return this.devToolsOpen === true; }
   }
   function getSession(key) {
     if (sessions.has(key)) return sessions.get(key);
@@ -364,6 +365,7 @@ test('ウィンドウを閉じる前に全セッションを保存し、Cookie�
     entries[1].webContents.session.cookies.flushStore = () => new Promise((resolve) => { finish = resolve; });
     let prevented = 0;
     ctx.win.emit('close', { preventDefault() { prevented++; } });
+    await new Promise(setImmediate);
     assert.equal(prevented, 1);
     assert.equal(ctx.electron.app.quitCalls || 0, 0);
     for (const entry of entries) { assert.equal(entry.webContents.destroyed, false); assert.equal(entry.webContents.session.storageFlushes, 1); }

@@ -7,13 +7,26 @@ async function fixture(page, origin = 'https://discord.com') {
   await page.route('**/*', (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Storage fixture</title><p>Offline fixture</p>' }));
   await page.addInitScript((source) => {
     window.__calls = [];
+    const handlers = {};
+    Object.defineProperty(window, 'outerWidth', { configurable: true, get: () => 2400 });
+    Object.defineProperty(window, 'outerHeight', { configurable: true, get: () => 1400 });
+    window.__devtools = (value) => handlers['discord:devtools-state']?.({}, value);
     new Function('require', source)(() => ({
       contextBridge: { executeInMainWorld: ({ func, args }) => func(...args) },
-      ipcRenderer: { on() {}, send: (channel, ...args) => window.__calls.push({ channel, args }), sendSync: () => ({ notificationSound: true }), invoke: async () => null },
+      ipcRenderer: { on: (name, callback) => { handlers[name] = callback; }, send: (channel, ...args) => window.__calls.push({ channel, args }), sendSync: () => ({ notificationSound: true, devToolsOpen: false }), invoke: async () => null },
     }));
   }, source);
   await page.goto(origin + '/channels/@me');
 }
+
+test('カラムの大きさを外寸として扱い、実際に開発者ツールを開いた場合は元の外寸に戻す', async ({ page }) => {
+  await fixture(page);
+  expect(await page.evaluate(() => [outerWidth === innerWidth, outerHeight === innerHeight])).toEqual([true, true]);
+  await page.evaluate(() => window.__devtools(true));
+  expect(await page.evaluate(() => [outerWidth, outerHeight])).toEqual([2400, 1400]);
+  await page.evaluate(() => window.__devtools(false));
+  expect(await page.evaluate(() => [outerWidth === innerWidth, outerHeight === innerHeight])).toEqual([true, true]);
+});
 
 test('LocalStorage・SessionStorageの変更を値なしで通知し、標準APIの結果と例外を保つ', async ({ page }) => {
   await fixture(page);

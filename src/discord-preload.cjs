@@ -220,6 +220,23 @@ function installMediaPolicy(initial) {
   } } });
 }
 
+function installViewGeometry(devToolsOpen) {
+  const key = Symbol.for('discorddeck.view-geometry');
+  if (window[key]) { window[key].update(devToolsOpen); return; }
+  let inspecting = devToolsOpen === true;
+  // WebContentsView reports the whole owner window as outer size. Its viewport is one column.
+  // Report this view's dimensions so ordinary column layouts don't look like docked DevTools.
+  for (const [outer, inner] of [['outerWidth', 'innerWidth'], ['outerHeight', 'innerHeight']]) {
+    const descriptor = Object.getOwnPropertyDescriptor(window, outer);
+    if (!descriptor?.configurable || typeof descriptor.get !== 'function') continue;
+    const original = descriptor.get;
+    Object.defineProperty(window, outer, { ...descriptor, get() {
+      return inspecting ? Reflect.apply(original, window, []) : window[inner];
+    } });
+  }
+  Object.defineProperty(window, key, { value: { update(value) { inspecting = value === true; } } });
+}
+
 function installStorageCheckpoints() {
   const key = Symbol.for('discorddeck.storage-checkpoints');
   if (window[key]) return;
@@ -245,6 +262,11 @@ function installStorageCheckpoints() {
 }
 
 if (window.top === window && location.origin === 'https://discord.com') {
+  const applyGeometry = (value) => {
+    try { contextBridge?.executeInMainWorld?.({ func: installViewGeometry, args: [value === true] }); } catch { /* Exit handlers still save normally. */ }
+  };
+  applyGeometry(ipcRenderer.sendSync?.('discord:view-options')?.devToolsOpen);
+  ipcRenderer.on('discord:devtools-state', (_event, value) => applyGeometry(value));
   window.addEventListener('discorddeck:storage-dirty', () => ipcRenderer.send('discord:storage-dirty'));
   try { contextBridge?.executeInMainWorld?.({ func: installStorageCheckpoints, args: [] }); } catch { /* Periodic native checkpoints remain active. */ }
   let policyWarning = false;

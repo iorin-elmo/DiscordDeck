@@ -131,6 +131,27 @@ test('終了ハンドラーが書き戻すブラウザ保存データを次回�
   } finally { if (app) await app.close(); await new Promise((resolve) => server.close(resolve)); }
 });
 
+test('カラムの外寸をそのカラムの表示領域として扱う', async () => {
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'discorddeck-geometry-e2e-'));
+  const { app, page } = await launch(data);
+  try {
+    await add(page, 'A'); await add(page, 'B');
+    await expect.poll(async () => (await nativeViews(app)).filter((view) => view.visible).length).toBe(2);
+    const geometry = await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      const wc = win.contentView.children.find((view) => view.webContents && view.webContents !== win.webContents).webContents;
+      const original = await wc.executeJavaScript('({outerWidth,innerWidth,outerHeight,innerHeight})');
+      wc.session.protocol.handle('https', () => new Response('<!doctype html><title>Offline geometry fixture</title>'));
+      await wc.loadURL('https://discord.com/channels/@me');
+      const corrected = await wc.executeJavaScript('({outerWidth,innerWidth,outerHeight,innerHeight})');
+      return { original, corrected };
+    });
+    console.log('Native view geometry:', JSON.stringify(geometry));
+    expect(geometry.corrected.outerWidth).toBe(geometry.corrected.innerWidth);
+    expect(geometry.corrected.outerHeight).toBe(geometry.corrected.innerHeight);
+  } finally { await app.close(); }
+});
+
 test('列の操作、ネイティブ描画、セッションの分離と再起動後の保持', async () => {
   test.setTimeout(120_000);
   const data = await fs.mkdtemp(path.join(os.tmpdir(), 'discorddeck-e2e-'));

@@ -5,6 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { resolveExternalApp } = require('./external-app.cjs');
 const { CredentialStore } = require('./credentials.cjs');
 const { SessionCookieStore } = require('./session-cookies.cjs');
+const { preparePageForExit } = require('./lifecycle.cjs');
 const { summarizeUnread, renderBadge } = require('./taskbar.cjs');
 const { UpdateManager, RELEASES_URL } = require('./updates.cjs');
 const { HOME, COLORS, MODES, MAX_ACCOUNTS, isDiscordURL, channelURL, externalURL, label, createAccount, normalizeState, partitionFor, clampBounds, discordAvatarURL, customAvatar, unreadFromTitle, reorderAccounts, requestedMedia, mediaEnabled, displayText, normalizeNavigation, normalizeColor, appSettings, audioDevice, stableUserAgent } = require('./model.cjs');
@@ -267,6 +268,8 @@ function createView(entry) {
   const wc = view.webContents;
   wc.setZoomFactor(entry.zoom);
   wc.setAudioMuted(entry.muted);
+  wc.on('devtools-opened', () => wc.send('discord:devtools-state', true));
+  wc.on('devtools-closed', () => wc.send('discord:devtools-state', false));
   wc.on('page-title-updated', (_event, title) => {
     const next = unreadFromTitle(title);
     const previous = titleUnread.get(entry.id);
@@ -368,8 +371,11 @@ function shutdown(afterFlush) {
   let settingsFailed = false;
   if (state) { try { save(); } catch { settingsFailed = true; } }
   const sessions = [...new Set([...views.values()].map((view) => view.webContents.session))];
-  shutdownPromise = Promise.allSettled(sessions.map(flushSession)).then((results) => {
-    // Flush Chromium storage without reading cookie or token values.
+  const pages = [...views.values()].map((view) => ({ contents: view.webContents, url: view.webContents.getURL() }));
+  shutdownPromise = Promise.allSettled(pages.map(({ contents }) => preparePageForExit(contents))).then(async (prepared) => {
+    if (prepared.some((result) => result.status === 'rejected')) settingsFailed = true;
+    const results = await Promise.allSettled(sessions.map(flushSession));
+    // The page's exit handlers have completed before Chromium storage is flushed.
     if (results.some((result) => result.status === 'rejected')) {
       console.warn('DiscordDeck: session persistence failed during shutdown.');
       if (afterFlush) settingsFailed = true;
@@ -379,6 +385,7 @@ function shutdown(afterFlush) {
     if (afterFlush) afterFlush(); else app.quit();
   }).catch((error) => {
     shuttingDown = false; shutdownComplete = false; shutdownPromise = undefined;
+    for (const { contents, url } of pages) if (!contents.isDestroyed() && contents.getURL() === 'about:blank' && isDiscordURL(url)) void contents.loadURL(url).catch(() => {});
     startStorageCheckpoints();
     emit(); if (win && !win.isDestroyed()) win.webContents.send('deck:layout');
     throw error;
@@ -387,6 +394,9 @@ function shutdown(afterFlush) {
 }
 
 function registerIPC() {
+  ipcMain.on('discord:view-options', (event) => {
+    event.returnValue = remoteEntry(event) ? { devToolsOpen: event.sender.isDevToolsOpened() } : null;
+  });
   ipcMain.on('discord:storage-dirty', (event) => {
     if (remoteEntry(event)) scheduleStorageFlush(event.sender.session);
   });
